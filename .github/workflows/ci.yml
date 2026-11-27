@@ -35,6 +35,21 @@ jobs:
         run: cargo fmt --all -- --check
         continue-on-error: true
 
+      # Отчёт компиляции попадает в Summary запуска — так ошибки сборки видно
+      # прямо на странице Actions, даже если лог недоступен.
+      - name: Компиляция с отчётом
+        continue-on-error: true
+        run: |
+          status=0
+          cargo check -p worldgod_core -p worldgod_render -p worldgod_preview \
+            --all-targets --message-format short > check.log 2>&1 || status=$?
+          {
+            echo "### cargo check: код выхода $status"
+            echo '```'
+            head -c 60000 check.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Clippy (ядро и рендер)
         run: cargo clippy -p worldgod_core -p worldgod_render -p worldgod_preview --all-targets
 
@@ -83,6 +98,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: app
+
+      - name: Компиляция с отчётом
+        continue-on-error: true
+        run: |
+          status=0
+          cargo check -p worldgod_app --all-targets --message-format short > check.log 2>&1 \
+            || status=$?
+          {
+            echo "### cargo check (app): код выхода $status"
+            echo '```'
+            head -c 60000 check.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clippy
         run: cargo clippy -p worldgod_app --all-targets
