@@ -51,7 +51,7 @@ impl WorldSize {
 
     /// Подпись для интерфейса.
     pub fn label_ru(self) -> &'static str {
-        match *self {
+        match self {
             Self::SMALL => "Малый",
             Self::MEDIUM => "Средний",
             Self::LARGE => "Большой",
