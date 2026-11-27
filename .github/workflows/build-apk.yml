@@ -15,7 +15,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # write нужен только для публикации отчёта сборки комментарием к коммиту
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -65,13 +66,24 @@ jobs:
         run: cargo install cargo-apk --version "^0.10"
 
       - name: Сборка APK (aarch64 + armv7 + x86_64)
+        id: build
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
         run: |
-          cargo apk build \
-            --release \
-            --manifest-path crates/worldgod_app/Cargo.toml
+          status=0
+          cargo apk build --release \
+            --manifest-path crates/worldgod_app/Cargo.toml > build.log 2>&1 || status=$?
+          {
+            echo "**cargo apk build** (код $status)"
+            echo '```'
+            tail -c 60000 build.log
+            echo '```'
+          } > report.md
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
+            "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+            -F "body=@report.md" > /dev/null || true
+          exit $status
 
       - name: Список собранных файлов
         run: find target -name '*.apk' -printf '%p — %s байт\n'
@@ -125,10 +137,19 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
         run: |
-          cargo apk build \
-            --release \
-            --target aarch64-linux-android \
-            --manifest-path crates/worldgod_app/Cargo.toml
+          status=0
+          cargo apk build --release --target aarch64-linux-android \
+            --manifest-path crates/worldgod_app/Cargo.toml > build.log 2>&1 || status=$?
+          {
+            echo "**cargo apk build (arm64)** (код $status)"
+            echo '```'
+            tail -c 60000 build.log
+            echo '```'
+          } > report.md
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
+            "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+            -F "body=@report.md" > /dev/null || true
+          exit $status
 
       - uses: actions/upload-artifact@v4
         with:
