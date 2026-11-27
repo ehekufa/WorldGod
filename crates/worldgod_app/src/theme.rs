@@ -99,22 +99,22 @@ pub fn visuals() -> Visuals {
     visuals.faint_bg_color = SURFACE_ALT;
     visuals.override_text_color = Some(TEXT);
     visuals.selection.bg_fill = ACCENT_DARK;
-    visuals.selection.stroke = Stroke::new(1.0, ACCENT);
+    visuals.selection.stroke = Stroke::new(1.0_f32, ACCENT);
     visuals.hyperlink_color = ACCENT;
     visuals.warn_fg_color = WARNING;
     visuals.error_fg_color = DANGER;
 
     visuals.widgets.noninteractive.bg_fill = SURFACE;
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT_DIM);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, TEXT_DIM);
     visuals.widgets.inactive.bg_fill = SURFACE_ALT;
     visuals.widgets.inactive.weak_bg_fill = SURFACE_ALT;
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, TEXT);
     visuals.widgets.hovered.bg_fill = SURFACE_HOVER;
     visuals.widgets.hovered.weak_bg_fill = SURFACE_HOVER;
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.5, TEXT);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.5_f32, TEXT);
     visuals.widgets.active.bg_fill = SURFACE_ACTIVE;
     visuals.widgets.active.weak_bg_fill = SURFACE_ACTIVE;
-    visuals.widgets.active.fg_stroke = Stroke::new(1.5, TEXT);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.5_f32, TEXT);
 
     visuals
 }

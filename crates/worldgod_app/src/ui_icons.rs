@@ -51,7 +51,7 @@ pub fn speed_icon(painter: &egui::Painter, rect: Rect, speed: Speed) {
 pub fn planet_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
     let center = point(rect, 0.5, 0.5);
     let radius = rect.width().min(rect.height()) * 0.28;
-    painter.circle_stroke(center, radius, Stroke::new(1.6, color));
+    painter.circle_stroke(center, radius, Stroke::new(1.6_f32, color));
     stroke_path(
         painter,
         rect,
@@ -250,7 +250,7 @@ fn zombie_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
 fn inspect_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
     let center = point(rect, 0.44, 0.42);
     let radius = rect.width().min(rect.height()) * 0.24;
-    painter.circle_stroke(center, radius, Stroke::new(2.0, color));
+    painter.circle_stroke(center, radius, Stroke::new(2.0_f32, color));
     stroke_path(painter, rect, &[(0.62, 0.6), (0.84, 0.82)], 2.6, color);
 }
 

@@ -191,16 +191,16 @@ fn paint_brush_cursor(
 
     if is_terrain {
         let radius = (state.tool.clamped_radius() as f32 + 0.6) * state.view.scale;
-        painter.circle_stroke(center, radius, Stroke::new(3.5, Color32::from_black_alpha(90)));
+        painter.circle_stroke(center, radius, Stroke::new(3.5_f32, Color32::from_black_alpha(90)));
         painter.circle_stroke(
             center,
             radius,
-            Stroke::new(1.5, theme::with_alpha(theme::ACCENT, 190)),
+            Stroke::new(1.5_f32, theme::with_alpha(theme::ACCENT, 190)),
         );
     }
 
     if is_spawn {
-        painter.circle_stroke(center, 9.0, Stroke::new(2.0, Color32::from_black_alpha(80)));
+        painter.circle_stroke(center, 9.0, Stroke::new(2.0_f32, Color32::from_black_alpha(80)));
         painter.circle_filled(center, 3.5, theme::with_alpha(theme::ACCENT, 230));
     }
 }

@@ -8,11 +8,20 @@ use worldgod_render::{render_scene, RenderOptions};
 pub const PX_PER_TILE: u32 = 3;
 
 /// Текстура мира с ограничением частоты обновлений.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct SceneTexture {
     handle: Option<egui::TextureHandle>,
     last_render: f64,
     last_size: (u32, u32),
+}
+
+impl std::fmt::Debug for SceneTexture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SceneTexture")
+            .field("has_texture", &self.handle.is_some())
+            .field("last_size", &self.last_size)
+            .finish()
+    }
 }
 
 impl SceneTexture {
