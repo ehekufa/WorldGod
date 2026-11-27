@@ -1,0 +1,6 @@
+[toolchain]
+# Версия зафиксирована только по каналу: минимальная поддерживаемая — 1.81
+# (см. `rust-version` в Cargo.toml), сборка идёт на стабильном компиляторе.
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

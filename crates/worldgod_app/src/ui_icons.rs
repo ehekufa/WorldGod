@@ -1,0 +1,338 @@
+//! Векторные иконки, нарисованные кодом.
+//!
+//! Никаких PNG-ассетов: иконки строятся из простых фигур, поэтому выглядят
+//! резко на любом DPI и легко перекрашиваются под состояние кнопки.
+
+use eframe::egui;
+use egui::{Color32, CornerRadius, Pos2, Rect, Stroke};
+use worldgod_core::brush::Tool;
+use worldgod_core::sim::Speed;
+
+/// Иконка инструмента.
+pub fn tool_icon(painter: &egui::Painter, rect: Rect, tool: Tool, color: Color32) {
+    match tool {
+        Tool::Raise => raise_icon(painter, rect, color),
+        Tool::Lower => water_icon(painter, rect, color),
+        Tool::Forest => forest_icon(painter, rect, color),
+        Tool::Sand => sand_icon(painter, rect, color),
+        Tool::Mountain => mountain_icon(painter, rect, color),
+        Tool::Human => human_icon(painter, rect, color),
+        Tool::Soldier => soldier_icon(painter, rect, color),
+        Tool::Deer => deer_icon(painter, rect, color),
+        Tool::Wolf => wolf_icon(painter, rect, color),
+        Tool::Zombie => zombie_icon(painter, rect, color),
+        Tool::Inspect => inspect_icon(painter, rect, color),
+    }
+}
+
+/// Иконка скорости времени.
+pub fn speed_icon(painter: &egui::Painter, rect: Rect, speed: Speed) {
+    let color = crate::theme::ACCENT;
+    match speed {
+        Speed::Paused => {
+            fill(painter, rect, &[(0.34, 0.24), (0.78, 0.5), (0.34, 0.76)], color);
+        }
+        Speed::Normal => {
+            fill(painter, rect, &[(0.26, 0.26), (0.6, 0.5), (0.26, 0.74)], color);
+        }
+        Speed::Fast => {
+            fill(painter, rect, &[(0.2, 0.26), (0.48, 0.5), (0.2, 0.74)], color);
+            fill(painter, rect, &[(0.5, 0.26), (0.78, 0.5), (0.5, 0.74)], color);
+        }
+        Speed::Turbo => {
+            fill(painter, rect, &[(0.14, 0.26), (0.38, 0.5), (0.14, 0.74)], color);
+            fill(painter, rect, &[(0.38, 0.26), (0.62, 0.5), (0.38, 0.74)], color);
+            fill(painter, rect, &[(0.62, 0.26), (0.86, 0.5), (0.62, 0.74)], color);
+        }
+    }
+}
+
+/// Иконка «новая планета».
+pub fn planet_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let center = point(rect, 0.5, 0.5);
+    let radius = rect.width().min(rect.height()) * 0.28;
+    painter.circle_stroke(center, radius, Stroke::new(1.6, color));
+    stroke_path(
+        painter,
+        rect,
+        &[(0.12, 0.58), (0.36, 0.5), (0.64, 0.5), (0.88, 0.42)],
+        1.6,
+        color,
+    );
+    painter.circle_filled(point(rect, 0.4, 0.38), radius * 0.22, color);
+}
+
+/// Иконка меню.
+pub fn menu_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    for y in [0.34_f32, 0.5, 0.66] {
+        stroke_path(
+            painter,
+            rect,
+            &[(0.28, y), (0.72, y)],
+            2.0,
+            color,
+        );
+    }
+}
+
+fn raise_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    fill(
+        painter,
+        rect,
+        &[(0.1, 0.82), (0.42, 0.5), (0.7, 0.82)],
+        color,
+    );
+    stroke_path(
+        painter,
+        rect,
+        &[(0.74, 0.62), (0.74, 0.24)],
+        2.0,
+        color,
+    );
+    stroke_path(
+        painter,
+        rect,
+        &[(0.62, 0.36), (0.74, 0.22), (0.86, 0.36)],
+        2.0,
+        color,
+    );
+}
+
+fn water_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    for (index, y) in [0.36_f32, 0.52, 0.68].iter().enumerate() {
+        let offset = index as f32 * 0.06;
+        stroke_path(
+            painter,
+            rect,
+            &[
+                (0.12, y + offset),
+                (0.28, y - 0.08 + offset),
+                (0.44, y + offset),
+                (0.6, y - 0.08 + offset),
+                (0.76, y + offset),
+                (0.88, y - 0.05 + offset),
+            ],
+            2.0,
+            color,
+        );
+    }
+}
+
+fn forest_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    bar(painter, rect, 0.46, 0.66, 0.08, 0.2, color);
+    fill(
+        painter,
+        rect,
+        &[(0.5, 0.16), (0.78, 0.52), (0.22, 0.52)],
+        color,
+    );
+    fill(
+        painter,
+        rect,
+        &[(0.5, 0.4), (0.88, 0.7), (0.12, 0.7)],
+        color,
+    );
+}
+
+fn sand_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    fill(
+        painter,
+        rect,
+        &[(0.08, 0.78), (0.34, 0.56), (0.56, 0.72), (0.78, 0.5), (0.94, 0.78)],
+        color,
+    );
+    for (x, y) in [(0.26_f32, 0.32_f32), (0.5, 0.22), (0.72, 0.32)] {
+        disc(painter, rect, x, y, 0.05, color);
+    }
+}
+
+fn mountain_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    fill(
+        painter,
+        rect,
+        &[(0.06, 0.82), (0.4, 0.24), (0.72, 0.82)],
+        color,
+    );
+    fill(
+        painter,
+        rect,
+        &[(0.5, 0.82), (0.72, 0.46), (0.96, 0.82)],
+        color,
+    );
+    fill(
+        painter,
+        rect,
+        &[(0.29, 0.46), (0.4, 0.24), (0.51, 0.46), (0.42, 0.42), (0.36, 0.5)],
+        Color32::WHITE,
+    );
+}
+
+fn human_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    disc(painter, rect, 0.5, 0.26, 0.13, color);
+    fill(
+        painter,
+        rect,
+        &[(0.34, 0.86), (0.5, 0.44), (0.66, 0.86)],
+        color,
+    );
+    fill(
+        painter,
+        rect,
+        &[(0.3, 0.44), (0.7, 0.44), (0.66, 0.6), (0.34, 0.6)],
+        color,
+    );
+}
+
+fn soldier_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    disc(painter, rect, 0.44, 0.26, 0.12, color);
+    fill(
+        painter,
+        rect,
+        &[(0.3, 0.88), (0.44, 0.42), (0.58, 0.88)],
+        color,
+    );
+    fill(
+        painter,
+        rect,
+        &[(0.26, 0.42), (0.62, 0.42), (0.58, 0.58), (0.3, 0.58)],
+        color,
+    );
+    stroke_path(painter, rect, &[(0.62, 0.78), (0.86, 0.2)], 2.2, color);
+    stroke_path(painter, rect, &[(0.22, 0.3), (0.42, 0.2)], 2.0, color);
+}
+
+fn deer_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    fill(
+        painter,
+        rect,
+        &[(0.3, 0.78), (0.5, 0.36), (0.72, 0.78)],
+        color,
+    );
+    stroke_path(painter, rect, &[(0.44, 0.4), (0.3, 0.16)], 1.8, color);
+    stroke_path(painter, rect, &[(0.56, 0.4), (0.7, 0.16)], 1.8, color);
+    stroke_path(painter, rect, &[(0.3, 0.16), (0.22, 0.24)], 1.6, color);
+    stroke_path(painter, rect, &[(0.7, 0.16), (0.78, 0.24)], 1.6, color);
+    stroke_path(painter, rect, &[(0.32, 0.3), (0.44, 0.34)], 1.4, color);
+    stroke_path(painter, rect, &[(0.68, 0.3), (0.56, 0.34)], 1.4, color);
+}
+
+fn wolf_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    fill(
+        painter,
+        rect,
+        &[
+            (0.18, 0.66),
+            (0.24, 0.24),
+            (0.42, 0.44),
+            (0.58, 0.44),
+            (0.76, 0.24),
+            (0.82, 0.66),
+            (0.5, 0.86),
+        ],
+        color,
+    );
+    disc(painter, rect, 0.38, 0.56, 0.045, Color32::from_rgb(255, 178, 66));
+    disc(painter, rect, 0.62, 0.56, 0.045, Color32::from_rgb(255, 178, 66));
+}
+
+fn zombie_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    disc(painter, rect, 0.5, 0.28, 0.12, color);
+    fill(
+        painter,
+        rect,
+        &[(0.36, 0.88), (0.5, 0.44), (0.64, 0.88)],
+        color,
+    );
+    stroke_path(painter, rect, &[(0.36, 0.52), (0.14, 0.7)], 2.0, color);
+    stroke_path(painter, rect, &[(0.64, 0.52), (0.86, 0.7)], 2.0, color);
+}
+
+fn inspect_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let center = point(rect, 0.44, 0.42);
+    let radius = rect.width().min(rect.height()) * 0.24;
+    painter.circle_stroke(center, radius, Stroke::new(2.0, color));
+    stroke_path(painter, rect, &[(0.62, 0.6), (0.84, 0.82)], 2.6, color);
+}
+
+// --- помощники --------------------------------------------------------------
+
+fn point(rect: Rect, x: f32, y: f32) -> Pos2 {
+    egui::pos2(
+        rect.left() + rect.width() * x,
+        rect.top() + rect.height() * y,
+    )
+}
+
+fn to_points(rect: Rect, points: &[(f32, f32)]) -> Vec<Pos2> {
+    points.iter().map(|(x, y)| point(rect, *x, *y)).collect()
+}
+
+fn fill(painter: &egui::Painter, rect: Rect, points: &[(f32, f32)], color: Color32) {
+    if points.len() < 3 {
+        return;
+    }
+    painter.add(egui::Shape::convex_polygon(
+        to_points(rect, points),
+        color,
+        Stroke::NONE,
+    ));
+}
+
+fn stroke_path(painter: &egui::Painter, rect: Rect, points: &[(f32, f32)], width: f32, color: Color32) {
+    if points.len() < 2 {
+        return;
+    }
+    painter.add(egui::Shape::line(
+        to_points(rect, points),
+        Stroke::new(width.max(1.0), color),
+    ));
+}
+
+fn disc(painter: &egui::Painter, rect: Rect, cx: f32, cy: f32, radius: f32, color: Color32) {
+    let scale = rect.width().min(rect.height());
+    painter.circle_filled(point(rect, cx, cy), scale * radius, color);
+}
+
+fn bar(painter: &egui::Painter, rect: Rect, x: f32, y: f32, width: f32, height: f32, color: Color32) {
+    let min = point(rect, x, y);
+    let max = point(rect, x + width, y + height);
+    painter.rect_filled(
+        Rect::from_min_max(min, max),
+        CornerRadius::same(2),
+        color,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn points_are_inside_rect() {
+        let rect = Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(40.0, 40.0));
+        let p = point(rect, 0.0, 0.0);
+        assert_eq!(p, egui::pos2(10.0, 20.0));
+        let p = point(rect, 1.0, 1.0);
+        assert_eq!(p, egui::pos2(50.0, 60.0));
+    }
+
+    #[test]
+    fn icons_do_not_panic() {
+        // Рисуем все иконки в тестовый контекст egui.
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let rect = Rect::from_min_size(ui.min_rect().min, egui::vec2(32.0, 32.0));
+                let painter = ui.painter();
+                for tool in Tool::ALL {
+                    tool_icon(painter, rect, tool, Color32::WHITE);
+                }
+                for speed in Speed::ALL {
+                    speed_icon(painter, rect, speed);
+                }
+                planet_icon(painter, rect, Color32::WHITE);
+                menu_icon(painter, rect, Color32::WHITE);
+            });
+        });
+    }
+}

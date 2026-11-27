@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  core:
+    name: Ядро, рендер и превью (без GPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: core
+
+      - name: Форматирование
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+
+      - name: Clippy (ядро и рендер)
+        run: cargo clippy -p worldgod_core -p worldgod_render -p worldgod_preview --all-targets
+
+      - name: Тесты (симуляция, рендер, превью)
+        run: cargo test -p worldgod_core -p worldgod_render -p worldgod_preview
+
+      - name: Документация и примеры из doc-комментариев
+        run: cargo test --doc -p worldgod_core -p worldgod_render
+
+      - name: Скриншоты сцен
+        run: cargo run --release -p worldgod_preview -- --out docs --px 4
+
+      - name: Загрузить скриншоты
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldgod-previews
+          if-no-files-found: error
+          retention-days: 14
+          path: docs/preview-*.png
+
+  app:
+    name: Приложение (eframe + egui)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Системные библиотеки для окна
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libgl1-mesa-dev \
+            pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: app
+
+      - name: Clippy
+        run: cargo clippy -p worldgod_app --all-targets
+
+      - name: Тесты интерфейса
+        run: cargo test -p worldgod_app
+
+      - name: Сборка десктопного бинарника
+        run: cargo build --release -p worldgod_app --bin worldgod
+
+      - name: Артефакт для Linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldgod-linux
+          if-no-files-found: error
+          retention-days: 14
+          path: target/release/worldgod

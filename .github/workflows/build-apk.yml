@@ -1,0 +1,138 @@
+name: Android APK
+
+# Собирает настоящий .apk из Rust-кода без Java/Gradle:
+# cargo-apk упаковывает cdylib в APK с NativeActivity.
+#
+# Готовый файл лежит в артефакте `worldgod-apk` (вкладка Actions → нужный
+# запуск → Artifacts).
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  apk:
+    name: Сборка APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Код
+        uses: actions/checkout@v4
+
+      - name: Java 17 (apksigner и zipalign из Android SDK)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools build-tools;35.0.0 platforms;android-35"
+
+      - name: Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27
+          add-to-path: false
+
+      - name: Rust и Android-цели
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Кэш зависимостей
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: android-apk
+          workspaces: ". -> target"
+
+      - name: Установка cargo-apk
+        run: cargo install cargo-apk --version "^0.10"
+
+      - name: Сборка APK (aarch64 + armv7 + x86_64)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          cargo apk build \
+            --release \
+            --manifest-path crates/worldgod_app/Cargo.toml
+
+      - name: Список собранных файлов
+        run: find target -name '*.apk' -printf '%p — %s байт\n'
+
+      - name: Загрузить APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldgod-apk
+          if-no-files-found: error
+          retention-days: 30
+          path: target/**/*.apk
+
+  # Отдельная сборка «только arm64» — быстрее для проверки PR.
+  apk-arm64:
+    name: APK только arm64 (быстрая проверка)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools build-tools;35.0.0 platforms;android-35"
+
+      - id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27
+          add-to-path: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-apk-arm64
+          workspaces: ". -> target"
+
+      - run: cargo install cargo-apk --version "^0.10"
+
+      - name: Сборка
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          cargo apk build \
+            --release \
+            --target aarch64-linux-android \
+            --manifest-path crates/worldgod_app/Cargo.toml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: worldgod-apk-arm64
+          if-no-files-found: error
+          retention-days: 7
+          path: target/**/*.apk

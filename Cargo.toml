@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/worldgod_core",
+    "crates/worldgod_render",
+    "crates/worldgod_app",
+    "crates/worldgod_preview",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+license = "MIT"
+repository = "https://github.com/ehekufa/WorldGod"
+
+[workspace.dependencies]
+worldgod_core = { path = "crates/worldgod_core" }
+worldgod_render = { path = "crates/worldgod_render" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
