@@ -3,6 +3,12 @@
 //! Android сам вызывает `android_main` из нашей `cdylib`. Всё остальное —
 //! обычный `eframe`: окно создаётся нативным слоем winit, а мы получаем
 //! тот же `egui`, что и на десктопе.
+//!
+//! Это единственное место в приложении, где разрешён «небезопасный»
+//! атрибут: `#[no_mangle]` относится к линту `unsafe_code`, хотя самого
+//! `unsafe`-кода здесь нет — задаётся только имя символа для линковщика.
+
+#![allow(unsafe_code)]
 
 use eframe::NativeOptions;
 use winit::platform::android::activity::AndroidApp;

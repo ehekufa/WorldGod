@@ -9,7 +9,9 @@
 //! * [`hud`] — панели интерфейса;
 //! * [`theme`] — цвета и шрифты.
 
-#![forbid(unsafe_code)]
+// `deny`, а не `forbid`: единственное исключение — экспортируемый символ
+// `android_main`, для которого нужен атрибут `#[no_mangle]` (см. `android.rs`).
+#![deny(unsafe_code)]
 #![warn(missing_debug_implementations)]
 
 #[cfg(target_os = "android")]

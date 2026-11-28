@@ -501,6 +501,8 @@ impl Simulation {
         self.next_entity_id += 1;
         let variant = (self.rng.next_u32() % 4) as u8;
         self.entities.push(Entity::new(id, species, spot, variant));
+        // Статистика всегда соответствует миру: интерфейс читает её как есть.
+        self.refresh_stats();
         Some(id)
     }
 
@@ -974,6 +976,7 @@ impl Simulation {
         self.totals.nations_founded += 1;
         self.blocked_dirty = true;
         self.territory_dirty = true;
+        self.refresh_stats();
         self.events.push(
             self.tick,
             EventKind::Nation,
