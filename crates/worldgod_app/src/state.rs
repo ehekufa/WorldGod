@@ -1,7 +1,8 @@
 //! Состояние приложения: мир, камера, кисть и тайминги.
 
 use worldgod_core::{
-    NationId, Relation, Simulation, TilePos, Tool, ToolConfig, Vec2, ViewTransform, WorldSize, SIM_HZ,
+    NationId, Relation, Simulation, TilePos, Tool, ToolCategory, ToolConfig, Vec2, ViewTransform,
+    WorldSize, SIM_HZ,
 };
 
 use crate::textures::SceneTexture;
@@ -45,6 +46,8 @@ pub struct AppState {
     pub view: ViewTransform,
     /// Выбранный инструмент и радиус.
     pub tool: ToolConfig,
+    /// Открытая вкладка категории в нижней панели.
+    pub tool_category: ToolCategory,
     /// Кэш текстуры.
     pub textures: SceneTexture,
     /// Текущий размер мира (для меню «новая планета»).
@@ -72,6 +75,7 @@ pub struct AppState {
     last_paint_tile: Option<TilePos>,
     last_paint_time: f64,
     last_spawn_time: f64,
+    last_weather_time: f64,
 }
 
 impl AppState {
@@ -84,6 +88,7 @@ impl AppState {
             sim,
             view,
             tool: ToolConfig::default(),
+            tool_category: ToolCategory::Terrain,
             textures: SceneTexture::default(),
             world_size: size,
             seed,
@@ -99,6 +104,7 @@ impl AppState {
             last_paint_tile: None,
             last_paint_time: 0.0,
             last_spawn_time: 0.0,
+            last_weather_time: -1.0,
         }
     }
 
@@ -117,6 +123,7 @@ impl AppState {
         self.view_initialized = false;
         self.diplomacy_pick = None;
         self.tool = ToolConfig::default();
+        self.tool_category = ToolCategory::Terrain;
         self.view
             .set_viewport(self.view.origin, self.view.size);
         self.view.fit(self.sim.size());
@@ -163,6 +170,27 @@ impl AppState {
         self.sim.cycle_relation(first, nation)
     }
 
+    /// Берёт инструмент в руку и открывает его категорию.
+    pub fn select_tool(&mut self, tool: Tool) {
+        self.tool.tool = tool;
+        self.tool_category = tool.category();
+        if tool != Tool::Inspect {
+            self.sim.select(None);
+        }
+    }
+
+    /// Открывает вкладку категории; если текущая кисть из другой категории,
+    /// в руку берётся первая кисть вкладки.
+    pub fn select_category(&mut self, category: ToolCategory) {
+        self.tool_category = category;
+        if category.tools().contains(&self.tool.tool) {
+            return;
+        }
+        if let Some(first) = category.tools().first() {
+            self.tool.tool = *first;
+        }
+    }
+
     /// Применяет текущую кисть к тайлу.
     pub fn apply_tool_at(&mut self, tile: TilePos) -> u32 {
         if self.tool.tool.is_diplomacy() {
@@ -187,6 +215,16 @@ impl AppState {
             return true;
         }
 
+        // Стихии бьют редко: каждая — это событие в ленте и урон по округе.
+        if self.tool.tool.is_weather() {
+            if self.time - self.last_weather_time < 0.4 {
+                return false;
+            }
+            self.last_weather_time = self.time;
+            self.last_paint_tile = Some(tile);
+            return true;
+        }
+
         let moved = self.last_paint_tile != Some(tile);
         if moved || self.time - self.last_paint_time >= 0.08 {
             self.last_paint_tile = Some(tile);
@@ -208,8 +246,12 @@ impl AppState {
                 None => "Война / Мир: тапните по первой стране".to_string(),
             };
         }
-        if self.tool.tool.is_terrain() {
-            format!("{} · радиус {}", self.tool.tool.label_ru(), self.tool.clamped_radius())
+        if self.tool.tool.is_paint() {
+            format!(
+                "{} · радиус {}",
+                self.tool.tool.label_ru(),
+                self.tool.clamped_radius()
+            )
         } else {
             self.tool.tool.hint_ru().to_string()
         }
@@ -252,6 +294,48 @@ mod tests {
         slow.advance(0.5);
         fast.advance(0.5);
         assert!(fast.sim.tick > slow.sim.tick);
+    }
+
+    #[test]
+    fn categories_switch_the_tool() {
+        let mut state = AppState::new(WorldSize::SMALL, 9);
+        assert_eq!(state.tool.tool, Tool::Raise);
+        assert_eq!(state.tool_category, ToolCategory::Terrain);
+
+        state.select_category(ToolCategory::Weather);
+        assert_eq!(state.tool.tool, Tool::Hurricane, "первая кисть вкладки берётся в руку");
+        assert_eq!(state.tool_category, ToolCategory::Weather);
+
+        state.select_tool(Tool::Snowfall);
+        assert_eq!(state.tool.tool, Tool::Snowfall);
+        assert_eq!(state.tool_category, ToolCategory::Weather);
+
+        // Возврат в рельеф не ломает выбранную стихию: она просто не в руке.
+        state.select_category(ToolCategory::Terrain);
+        assert_eq!(state.tool.tool, Tool::Raise);
+        assert!(state.tool.tool.is_paint());
+    }
+
+    #[test]
+    fn weather_brush_is_throttled_and_paints() {
+        let mut state = AppState::new(WorldSize::SMALL, 13);
+        state
+            .sim
+            .apply_tool(ToolConfig::new(Tool::Raise, 8), TilePos::new(60, 60));
+        state.select_tool(Tool::Hurricane);
+
+        assert!(state.brush_tick(TilePos::new(60, 60)));
+        assert!(!state.brush_tick(TilePos::new(60, 60)), "второй тап подряд — рано");
+        state.time += 0.5;
+        assert!(state.brush_tick(TilePos::new(60, 60)));
+
+        state.select_tool(Tool::Snowfall);
+        state.time += 1.0;
+        let changed = state.apply_tool_at(TilePos::new(60, 60));
+        assert!(changed > 0, "снегопад должен менять тайлы");
+        assert!(state.sim.world.snow(TilePos::new(60, 60)) > 0);
+        assert!(state.texture_dirty);
+        assert!(state.status_line().contains("Снег"));
     }
 
     #[test]

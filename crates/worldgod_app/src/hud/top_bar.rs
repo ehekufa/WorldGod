@@ -45,6 +45,14 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         let land = format!("{:.0}%", stats.land_fraction * 100.0);
         if widgets::stat_chip_width(ui, "суша", &land) <= budget {
             widgets::stat_chip(ui, "суша", &land, theme::WARNING);
+            budget -= widgets::stat_chip_width(ui, "суша", &land) + 8.0;
+        }
+        // Снег показываем, только когда он лежит: «12% снег».
+        if stats.snow_tiles > 0 {
+            let snow = format!("{:.0}%", stats.snow_fraction * 100.0);
+            if widgets::stat_chip_width(ui, "снег", &snow) <= budget {
+                widgets::stat_chip(ui, "снег", &snow, theme::SNOW);
+            }
         }
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -111,6 +119,7 @@ fn event_color(kind: EventKind) -> Color32 {
         EventKind::Death => theme::DANGER,
         EventKind::Combat => Color32::from_rgb(255, 150, 120),
         EventKind::Nature => Color32::from_rgb(150, 200, 220),
+        EventKind::Weather => Color32::from_rgb(160, 214, 246),
     }
 }
 

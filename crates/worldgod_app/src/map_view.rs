@@ -171,9 +171,9 @@ fn paint_brush_cursor(
     state: &AppState,
     hovered: Option<TilePos>,
 ) {
-    let is_terrain = state.tool.tool.is_terrain();
+    let is_paint = state.tool.tool.is_paint();
     let is_spawn = state.tool.tool.species().is_some();
-    if !is_terrain && !is_spawn {
+    if !is_paint && !is_spawn {
         return;
     }
 
@@ -189,7 +189,8 @@ fn paint_brush_cursor(
     let center = egui::pos2(center.x, center.y);
     let painter = ui.painter().with_clip_rect(rect);
 
-    if is_terrain {
+    if is_paint {
+        // Кисти рельефа и стихии работают одинаковым кругом.
         let radius = (state.tool.clamped_radius() as f32 + 0.6) * state.view.scale;
         painter.circle_stroke(center, radius, Stroke::new(3.5_f32, Color32::from_black_alpha(90)));
         painter.circle_stroke(

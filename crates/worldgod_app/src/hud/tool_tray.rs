@@ -2,7 +2,7 @@
 
 use eframe::egui;
 use egui::{RichText, Ui};
-use worldgod_core::{Tool, ToolConfig};
+use worldgod_core::{ToolCategory, ToolConfig};
 
 use crate::hud::widgets;
 use crate::state::AppState;
@@ -21,24 +21,37 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         });
     }
 
-    // Кнопки переносятся на вторую строку: на телефоне все инструменты
-    // видны сразу, без горизонтальной прокрутки.
+    // Вкладки категорий: рельеф, жизнь, стихии, прочее.
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+        for category in ToolCategory::ALL {
+            let selected = state.tool_category == category;
+            let response = widgets::category_tab(ui, category.label_ru(), selected);
+            if response.clicked() {
+                state.select_category(category);
+            }
+            let count = category.tools().len();
+            response.on_hover_text(format!("{} · кистей: {count}", category.label_ru()));
+        }
+    });
+
+    ui.add_space(4.0);
+
+    // Кнопки активной категории переносятся на вторую строку: на телефоне
+    // все кисти видны сразу, без горизонтальной прокрутки.
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-        for tool in Tool::ALL {
-            let selected = state.tool.tool == tool;
-            let response = widgets::tool_button(ui, tool, selected);
+        for tool in state.tool_category.tools() {
+            let selected = state.tool.tool == *tool;
+            let response = widgets::tool_button(ui, *tool, selected);
             if response.clicked() {
-                state.tool.tool = tool;
-                if tool != Tool::Inspect {
-                    state.sim.select(None);
-                }
+                state.select_tool(*tool);
             }
             response.on_hover_text(tool.hint_ru());
         }
     });
 
-    if state.tool.tool.is_terrain() {
+    if state.tool.tool.is_paint() {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Радиус").size(11.5).color(theme::TEXT_DIM));
             let mut radius = state.tool.clamped_radius();
@@ -73,14 +86,28 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use worldgod_core::WorldSize;
+    use worldgod_core::{Tool, WorldSize};
+
+    #[test]
+    fn tray_renders_for_every_category() {
+        let mut state = AppState::new(WorldSize::SMALL, 17);
+        let ctx = egui::Context::default();
+        for category in ToolCategory::ALL {
+            state.select_category(category);
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::TopBottomPanel::bottom("tray").show(ctx, |ui| {
+                    show(ui, &mut state);
+                });
+            });
+        }
+    }
 
     #[test]
     fn tray_renders_for_every_tool() {
         let mut state = AppState::new(WorldSize::SMALL, 3);
         let ctx = egui::Context::default();
         for tool in Tool::ALL {
-            state.tool.tool = tool;
+            state.select_tool(tool);
             let _ = ctx.run(egui::RawInput::default(), |ctx| {
                 egui::TopBottomPanel::bottom("test").show(ctx, |ui| {
                     show(ui, &mut state);

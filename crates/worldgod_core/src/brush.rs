@@ -8,6 +8,7 @@ use crate::grid::{for_each_in_radius, TilePos};
 use crate::rng::Rng;
 use crate::species::Species;
 use crate::terrain::{MAX_ELEVATION, SEA_LEVEL};
+use crate::weather::Weather;
 use crate::world::{Tile, World};
 
 /// Инструмент в руке бога.
@@ -37,11 +38,71 @@ pub enum Tool {
     Inspect,
     /// Дипломатия: тапнуть по двум странам — объявить войну или союз.
     Diplomacy,
+    /// Стихия: ураган.
+    Hurricane,
+    /// Стихия: вспышка солнца (жара и сушь).
+    SolarFlare,
+    /// Стихия: дождь.
+    Rain,
+    /// Стихия: снегопад.
+    Snowfall,
+}
+
+/// Категория инструментов — вкладка нижней панели.
+///
+/// Категорий несколько, чтобы кисти не сваливались в одну длинную ленту:
+/// рельеф меняет карту, жизнь заселяет её, стихии бьют по миру, а в «Прочем»
+/// лежат осмотр и дипломатия.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ToolCategory {
+    /// Суша, вода, лес, пляж, горы.
+    Terrain,
+    /// Люди, воины, олени, волки, зомби.
+    Life,
+    /// Ураган, вспышка солнца, дождь, снегопад.
+    Weather,
+    /// Осмотр существ и кисть «Война / Мир».
+    Other,
+}
+
+impl ToolCategory {
+    /// Все категории в порядке вкладок.
+    pub const ALL: [ToolCategory; 4] = [
+        Self::Terrain,
+        Self::Life,
+        Self::Weather,
+        Self::Other,
+    ];
+
+    /// Подпись вкладки.
+    pub fn label_ru(self) -> &'static str {
+        match self {
+            Self::Terrain => "Рельеф",
+            Self::Life => "Жизнь",
+            Self::Weather => "Стихии",
+            Self::Other => "Прочее",
+        }
+    }
+
+    /// Какие инструменты входят в категорию.
+    pub fn tools(self) -> &'static [Tool] {
+        match self {
+            Self::Terrain => &Tool::TERRAIN,
+            Self::Life => &Tool::SPAWN,
+            Self::Weather => &Tool::WEATHER,
+            Self::Other => &Tool::OTHER,
+        }
+    }
+
+    /// Категория, в которой лежит инструмент.
+    pub fn of(tool: Tool) -> Self {
+        tool.category()
+    }
 }
 
 impl Tool {
-    /// Все инструменты в порядке панели.
-    pub const ALL: [Tool; 12] = [
+    /// Все инструменты по категориям (в порядке вкладок).
+    pub const ALL: [Tool; 16] = [
         Self::Raise,
         Self::Lower,
         Self::Forest,
@@ -52,6 +113,10 @@ impl Tool {
         Self::Deer,
         Self::Wolf,
         Self::Zombie,
+        Self::Hurricane,
+        Self::SolarFlare,
+        Self::Rain,
+        Self::Snowfall,
         Self::Inspect,
         Self::Diplomacy,
     ];
@@ -74,6 +139,31 @@ impl Tool {
         Self::Zombie,
     ];
 
+    /// Стихии.
+    pub const WEATHER: [Tool; 4] = [
+        Self::Hurricane,
+        Self::SolarFlare,
+        Self::Rain,
+        Self::Snowfall,
+    ];
+
+    /// Осмотр и дипломатия.
+    pub const OTHER: [Tool; 2] = [Self::Inspect, Self::Diplomacy];
+
+    /// Категория инструмента.
+    pub fn category(self) -> ToolCategory {
+        match self {
+            Self::Raise | Self::Lower | Self::Forest | Self::Sand | Self::Mountain => {
+                ToolCategory::Terrain
+            }
+            Self::Human | Self::Soldier | Self::Deer | Self::Wolf | Self::Zombie => {
+                ToolCategory::Life
+            }
+            Self::Hurricane | Self::SolarFlare | Self::Rain | Self::Snowfall => ToolCategory::Weather,
+            Self::Inspect | Self::Diplomacy => ToolCategory::Other,
+        }
+    }
+
     /// Подпись на кнопке.
     pub fn label_ru(self) -> &'static str {
         match self {
@@ -89,6 +179,10 @@ impl Tool {
             Self::Zombie => "Зомби",
             Self::Inspect => "Осмотр",
             Self::Diplomacy => "Война / Мир",
+            Self::Hurricane => "Ураган",
+            Self::SolarFlare => "Вспышка",
+            Self::Rain => "Дождь",
+            Self::Snowfall => "Снег",
         }
     }
 
@@ -107,6 +201,10 @@ impl Tool {
             Self::Zombie => "Зомби заражает убитых",
             Self::Inspect => "Тапните по существу",
             Self::Diplomacy => "Тапните по двум странам: война → союз → мир",
+            Self::Hurricane => Weather::Hurricane.hint_ru(),
+            Self::SolarFlare => Weather::SolarFlare.hint_ru(),
+            Self::Rain => Weather::Rain.hint_ru(),
+            Self::Snowfall => Weather::Snowfall.hint_ru(),
         }
     }
 
@@ -125,6 +223,10 @@ impl Tool {
             Self::Zombie => [146, 190, 120],
             Self::Inspect => [200, 200, 200],
             Self::Diplomacy => [224, 120, 96],
+            Self::Hurricane => Weather::Hurricane.accent_rgb(),
+            Self::SolarFlare => Weather::SolarFlare.accent_rgb(),
+            Self::Rain => Weather::Rain.accent_rgb(),
+            Self::Snowfall => Weather::Snowfall.accent_rgb(),
         }
     }
 
@@ -139,6 +241,27 @@ impl Tool {
             self,
             Self::Raise | Self::Lower | Self::Forest | Self::Sand | Self::Mountain
         )
+    }
+
+    /// Это стихия?
+    pub fn is_weather(self) -> bool {
+        self.weather().is_some()
+    }
+
+    /// Какая стихия применяется этим инструментом.
+    pub fn weather(self) -> Option<Weather> {
+        match self {
+            Self::Hurricane => Some(Weather::Hurricane),
+            Self::SolarFlare => Some(Weather::SolarFlare),
+            Self::Rain => Some(Weather::Rain),
+            Self::Snowfall => Some(Weather::Snowfall),
+            _ => None,
+        }
+    }
+
+    /// Кисть работает кругом с радиусом (рельеф и стихии).
+    pub fn is_paint(self) -> bool {
+        self.is_terrain() || self.is_weather()
     }
 
     /// Существо, которое ставит инструмент.
@@ -195,7 +318,7 @@ impl ToolConfig {
 
     /// Подпись текущего режима для строки состояния.
     pub fn status_ru(self) -> String {
-        if self.tool.is_terrain() {
+        if self.tool.is_paint() {
             format!("{} · радиус {}", self.tool.label_ru(), self.clamped_radius())
         } else {
             self.tool.label_ru().to_string()
@@ -450,6 +573,41 @@ mod tests {
         assert_eq!(Tool::Human.spawn_count(), 1);
         assert!(Tool::Forest.is_terrain());
         assert!(!Tool::Human.is_terrain());
+    }
+
+    #[test]
+    fn weather_tools_map_to_weather() {
+        assert_eq!(Tool::Hurricane.weather(), Some(Weather::Hurricane));
+        assert_eq!(Tool::Snowfall.weather(), Some(Weather::Snowfall));
+        assert_eq!(Tool::Raise.weather(), None);
+        assert!(Tool::Rain.is_weather());
+        assert!(Tool::Rain.is_paint());
+        assert!(!Tool::Rain.is_terrain());
+        assert!(!Tool::Human.is_paint());
+        for tool in Tool::WEATHER {
+            assert_eq!(tool.category(), ToolCategory::Weather);
+            assert!(!tool.label_ru().is_empty());
+            assert!(!tool.hint_ru().is_empty());
+        }
+    }
+
+    #[test]
+    fn categories_cover_every_tool_once() {
+        let mut seen = Vec::new();
+        for category in ToolCategory::ALL {
+            assert!(!category.label_ru().is_empty());
+            assert!(!category.tools().is_empty(), "{:?} пуста", category);
+            for tool in category.tools() {
+                assert!(!seen.contains(tool), "{tool:?} попал в две категории");
+                seen.push(*tool);
+                assert_eq!(tool.category(), category);
+                assert_eq!(ToolCategory::of(*tool), category);
+            }
+        }
+        assert_eq!(seen.len(), Tool::ALL.len(), "не все инструменты разложены");
+        for tool in Tool::ALL {
+            assert!(seen.contains(&tool), "{tool:?} не попал ни в одну категорию");
+        }
     }
 
     #[test]

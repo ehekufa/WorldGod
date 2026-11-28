@@ -17,6 +17,8 @@ pub enum EventKind {
     Combat,
     /// Изменение природы игроком.
     Nature,
+    /// Стихия: ураган, вспышка солнца, дождь или снегопад.
+    Weather,
 }
 
 impl EventKind {
@@ -33,17 +35,19 @@ impl EventKind {
             Self::Death => "x",
             Self::Combat => "!",
             Self::Nature => "~",
+            Self::Weather => "#",
         }
     }
 
     /// Все категории — для проверок в тестах.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Nation,
         Self::Build,
         Self::Birth,
         Self::Death,
         Self::Combat,
         Self::Nature,
+        Self::Weather,
     ];
 }
 

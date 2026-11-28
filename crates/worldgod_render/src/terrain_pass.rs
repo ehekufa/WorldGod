@@ -43,14 +43,18 @@ pub fn draw(
                 tile_color(world, pos, tile, terrain, time),
             );
 
-            match terrain {
-                Terrain::Forest => forest_detail(frame, sx, sy, px, tile.variant),
-                Terrain::Hills | Terrain::Mountain | Terrain::Snow => {
-                    rock_detail(frame, sx, sy, px, terrain, tile)
+            // Под толстым слоем снега мелкие детали (трава, песок, кроны)
+            // не видны: снег рисуется как ровное белое покрывало.
+            if tile.snow < 90 {
+                match terrain {
+                    Terrain::Forest => forest_detail(frame, sx, sy, px, tile.variant),
+                    Terrain::Hills | Terrain::Mountain | Terrain::Snow => {
+                        rock_detail(frame, sx, sy, px, terrain, tile)
+                    }
+                    Terrain::Beach => sand_detail(frame, sx, sy, px, tile.variant),
+                    Terrain::Grass => grass_detail(frame, sx, sy, px, tile.variant),
+                    _ => {}
                 }
-                Terrain::Beach => sand_detail(frame, sx, sy, px, tile.variant),
-                Terrain::Grass => grass_detail(frame, sx, sy, px, tile.variant),
-                _ => {}
             }
 
             if terrain.is_water() && world.land_neighbors(pos) > 0 {
@@ -92,7 +96,16 @@ fn tile_color(world: &World, pos: TilePos, tile: &Tile, terrain: Terrain, time: 
         _ => 0.985,
     };
 
-    lighten(base, light * variation)
+    let color = lighten(base, light * variation);
+
+    // Снежный покров — погодный слой поверх рельефа: чем его больше,
+    // тем сильнее тайл уходит в белый.
+    let snow = tile.snow_fraction();
+    if snow > 0.02 {
+        mix(color, palette::SNOW, (snow * 0.88).min(1.0))
+    } else {
+        color
+    }
 }
 
 fn water_color(pos: TilePos, tile: &Tile, terrain: Terrain, time: f32) -> [u8; 3] {
@@ -248,6 +261,40 @@ mod tests {
         draw(&mut frame, &world, &[], &[], 3, 0.0);
         let land = frame.get(8 * 3 + 1, 8 * 3 + 1).expect("пиксель");
         assert!(land[1] > land[2], "трава должна быть зеленее синего: {land:?}");
+    }
+
+    #[test]
+    fn snow_makes_the_tile_lighter() {
+        let mut world = World::ocean(32, 32, 4);
+        let spot = TilePos::new(16, 16);
+        world.set_elevation(spot, SEA_LEVEL + 120);
+        world.set_moisture(spot, 60);
+
+        let frame_clear = render_tile(&world);
+        world.set_snow(spot, 255);
+        let frame_snowy = render_tile(&world);
+
+        let clear = pixel_color(&frame_clear);
+        let snowy = pixel_color(&frame_snowy);
+        assert!(
+            brightness(snowy) > brightness(clear),
+            "снег должен осветлять тайл: {clear:?} → {snowy:?}"
+        );
+    }
+
+    fn render_tile(world: &World) -> Frame {
+        let mut frame = Frame::new(world.width() * 2, world.height() * 2);
+        draw(&mut frame, world, &[], &[], 2, 0.0);
+        frame
+    }
+
+    fn pixel_color(frame: &Frame) -> [u8; 3] {
+        // Внутренний пиксель тайла (16,16) при 2 пикселях на тайл.
+        frame.get(16 * 2 + 1, 16 * 2 + 1).expect("пиксель")
+    }
+
+    fn brightness(color: [u8; 3]) -> u32 {
+        color.iter().map(|channel| *channel as u32).sum()
     }
 
     #[test]

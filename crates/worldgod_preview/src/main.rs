@@ -11,7 +11,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use worldgod_core::entity::EntityId;
-use worldgod_core::{BuildingKind, Relation, Simulation, Species, TilePos, Tool, ToolConfig, WorldSize};
+use worldgod_core::{
+    BuildingKind, Relation, Simulation, Species, TilePos, Tool, ToolConfig, Weather, WorldSize,
+};
 use worldgod_render::{render_scene, Frame, RenderOptions};
 
 /// Настройки запуска.
@@ -34,12 +36,13 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let scenes: [(&str, fn(u32) -> Frame); 5] = [
+    let scenes: [(&str, fn(u32) -> Frame); 6] = [
         ("preview-1-ocean.png", ocean_scene),
         ("preview-2-island.png", island_scene),
         ("preview-3-nation.png", nation_scene),
         ("preview-4-monsters.png", monsters_scene),
         ("preview-5-war.png", war_scene),
+        ("preview-6-weather.png", weather_scene),
     ];
 
     let mut failed = false;
@@ -196,6 +199,39 @@ fn war_scene(px: u32) -> Frame {
     render(&sim, px, 18.0)
 }
 
+/// Четыре стихии на одном острове: снег на севере, сушь на востоке,
+/// дождь на западе и ураган на юге.
+///
+/// Сцена показывает новые категории кистей: рельеф, жизнь, стихии и прочее.
+fn weather_scene(px: u32) -> Frame {
+    let mut sim = Simulation::new(WorldSize::MEDIUM, 909);
+    build_island(&mut sim);
+    let center = center_of(&sim);
+
+    // Небольшая страна, чтобы урагану было что ломать.
+    let home = land_near(&sim, center.offset(-6, 10));
+    let nation = sim.found_nation_at(home);
+    for (dx, dy) in [(-4, -4), (4, -4), (6, 3)] {
+        let spot = land_near(&sim, home.offset(dx, dy));
+        if sim.building_at(spot).is_none() {
+            sim.finish_house_for(nation, spot);
+        }
+    }
+
+    sim.cast_weather(Weather::Snowfall, center.offset(0, -20), 11);
+    sim.cast_weather(Weather::SolarFlare, center.offset(16, 4), 9);
+    sim.cast_weather(Weather::Rain, center.offset(-16, -10), 9);
+    sim.cast_weather(Weather::Hurricane, center.offset(0, 20), 10);
+
+    let _ = spawn_people(&mut sim, 4);
+    for _ in 0..2 {
+        let _ = spawn_near_center(&mut sim, Species::Deer);
+    }
+    sim.run(160);
+    report("стихии", &sim);
+    render(&sim, px, 22.0)
+}
+
 // --- сценарий ---------------------------------------------------------------
 
 /// Рисует остров так, как это сделал бы игрок: несколько мазков суши,
@@ -287,13 +323,15 @@ fn render(sim: &Simulation, px: u32, time: f32) -> Frame {
 fn report(label: &str, sim: &Simulation) {
     let stats = sim.stats;
     println!(
-        "{label}: тик {}, люди {}, страны {}, дома {}, монстры {}, суша {:.1}%",
+        "{label}: тик {}, люди {}, страны {}, дома {}, монстры {}, суша {:.1}%, снег {:.1}% ({} тайлов)",
         stats.tick,
         stats.population,
         stats.nations,
         stats.houses,
         stats.monsters,
-        stats.land_fraction * 100.0
+        stats.land_fraction * 100.0,
+        stats.snow_fraction * 100.0,
+        stats.snow_tiles
     );
 }
 
@@ -311,6 +349,32 @@ mod tests {
             );
             assert!(frame.to_png().len() > 1000);
         }
+    }
+
+    #[test]
+    fn weather_scene_mixes_snow_and_damage() {
+        let mut sim = Simulation::new(WorldSize::SMALL, 909);
+        build_island(&mut sim);
+        let center = center_of(&sim);
+
+        sim.cast_weather(Weather::Snowfall, center.offset(0, -14), 9);
+        let snowy = sim.stats.snow_tiles;
+        assert!(snowy > 0, "снегопад должен оставить снег");
+
+        sim.cast_weather(Weather::SolarFlare, center.offset(12, 4), 7);
+        sim.cast_weather(Weather::Hurricane, center.offset(0, 14), 7);
+        assert!(
+            sim.events
+                .recent(20)
+                .any(|event| event.kind == worldgod_core::EventKind::Weather),
+            "стихии пишут в ленту"
+        );
+
+        let frame = render(&sim, 2, 0.0);
+        assert_eq!(
+            frame.size(),
+            (WorldSize::SMALL.width * 2, WorldSize::SMALL.height * 2)
+        );
     }
 
     #[test]

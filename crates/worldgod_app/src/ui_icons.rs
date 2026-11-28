@@ -7,6 +7,7 @@ use eframe::egui;
 use egui::{Color32, CornerRadius, Pos2, Rect, Stroke};
 use worldgod_core::brush::Tool;
 use worldgod_core::sim::Speed;
+use worldgod_core::weather::Weather;
 
 /// Иконка инструмента.
 pub fn tool_icon(painter: &egui::Painter, rect: Rect, tool: Tool, color: Color32) {
@@ -23,6 +24,93 @@ pub fn tool_icon(painter: &egui::Painter, rect: Rect, tool: Tool, color: Color32
         Tool::Zombie => zombie_icon(painter, rect, color),
         Tool::Inspect => inspect_icon(painter, rect, color),
         Tool::Diplomacy => diplomacy_icon(painter, rect, color),
+        Tool::Hurricane | Tool::SolarFlare | Tool::Rain | Tool::Snowfall => {
+            let weather = tool.weather().unwrap_or(Weather::Rain);
+            weather_icon(painter, rect, weather, color);
+        }
+    }
+}
+
+/// Иконка стихии.
+pub fn weather_icon(painter: &egui::Painter, rect: Rect, weather: Weather, color: Color32) {
+    match weather {
+        Weather::Hurricane => hurricane_icon(painter, rect, color),
+        Weather::SolarFlare => solar_flare_icon(painter, rect, color),
+        Weather::Rain => rain_icon(painter, rect, color),
+        Weather::Snowfall => snowfall_icon(painter, rect, color),
+    }
+}
+
+/// Ураган: спираль ветра.
+fn hurricane_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let center = point(rect, 0.5, 0.5);
+    let radius = rect.width().min(rect.height());
+    let mut points = Vec::with_capacity(26);
+    for step in 0..26 {
+        let t = step as f32 / 25.0;
+        let angle = t * std::f32::consts::TAU * 1.6;
+        let r = radius * (0.42 - 0.34 * t);
+        points.push(egui::pos2(
+            center.x + angle.cos() * r,
+            center.y + angle.sin() * r,
+        ));
+    }
+    painter.add(egui::Shape::line(points, Stroke::new(2.0_f32, color)));
+    painter.circle_filled(center, radius * 0.06, color);
+}
+
+/// Вспышка солнца: диск с лучами.
+fn solar_flare_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    disc(painter, rect, 0.5, 0.5, 0.17, color);
+    for ray in 0..8 {
+        let angle = ray as f32 * std::f32::consts::TAU / 8.0;
+        let inner = 0.28;
+        let outer = if ray % 2 == 0 { 0.46 } else { 0.38 };
+        let (sin, cos) = angle.sin_cos();
+        stroke_path(
+            painter,
+            rect,
+            &[
+                (0.5 + cos * inner, 0.5 + sin * inner),
+                (0.5 + cos * outer, 0.5 + sin * outer),
+            ],
+            2.0,
+            color,
+        );
+    }
+}
+
+/// Дождь: облако и капли.
+fn rain_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    disc(painter, rect, 0.38, 0.36, 0.17, color);
+    disc(painter, rect, 0.6, 0.4, 0.14, color);
+    fill(
+        painter,
+        rect,
+        &[(0.2, 0.46), (0.82, 0.46), (0.78, 0.56), (0.24, 0.56)],
+        color,
+    );
+    for drop in 0..3 {
+        let x = 0.3 + drop as f32 * 0.2;
+        stroke_path(painter, rect, &[(x, 0.64), (x - 0.04, 0.86)], 1.8, color);
+    }
+}
+
+/// Снегопад: облако и снежинки.
+fn snowfall_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    disc(painter, rect, 0.38, 0.34, 0.16, color);
+    disc(painter, rect, 0.6, 0.38, 0.13, color);
+    fill(
+        painter,
+        rect,
+        &[(0.2, 0.44), (0.82, 0.44), (0.78, 0.54), (0.24, 0.54)],
+        color,
+    );
+    for flake in 0..3 {
+        let x = 0.28 + flake as f32 * 0.22;
+        let y = 0.68 + (flake % 2) as f32 * 0.1;
+        stroke_path(painter, rect, &[(x - 0.06, y), (x + 0.06, y)], 1.5, color);
+        stroke_path(painter, rect, &[(x, y - 0.08), (x, y + 0.08)], 1.5, color);
     }
 }
 
