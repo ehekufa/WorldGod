@@ -95,6 +95,16 @@ pub const HULL_DARK: [u8; 3] = [112, 80, 52];
 
 /// Подсветка выбранного существа.
 pub const SELECTION: [u8; 3] = [255, 255, 255];
+
+// Годзилла.
+pub const GODZILLA: [u8; 3] = [74, 108, 78];
+pub const GODZILLA_DARK: [u8; 3] = [48, 74, 54];
+pub const GODZILLA_SPIKE: [u8; 3] = [214, 222, 198];
+
+// Лаборатория.
+pub const GLASS: [u8; 3] = [126, 186, 198];
+pub const GLASS_DARK: [u8; 3] = [86, 136, 152];
+pub const BRICK: [u8; 3] = [168, 156, 142];
 /// Кровь.
 pub const BLOOD: [u8; 3] = [148, 46, 42];
 

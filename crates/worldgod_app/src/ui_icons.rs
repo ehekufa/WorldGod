@@ -6,6 +6,7 @@
 use eframe::egui;
 use egui::{Color32, CornerRadius, Pos2, Rect, Stroke};
 use worldgod_core::brush::Tool;
+use worldgod_core::explosives::Explosive;
 use worldgod_core::sim::Speed;
 use worldgod_core::weather::Weather;
 
@@ -28,8 +29,96 @@ pub fn tool_icon(painter: &egui::Painter, rect: Rect, tool: Tool, color: Color32
             let weather = tool.weather().unwrap_or(Weather::Rain);
             weather_icon(painter, rect, weather, color);
         }
+        Tool::OreStone | Tool::OreCoal | Tool::OreDiamond | Tool::OreRuby | Tool::OreEmerald => {
+            ore_icon(painter, rect, color);
+        }
+        Tool::Godzilla => godzilla_icon(painter, rect, color),
+        Tool::Dynamite | Tool::Nuke => {
+            let kind = tool.explosive().unwrap_or(Explosive::Dynamite);
+            explosive_icon(painter, rect, kind, color);
+        }
     }
 }
+
+/// Кристалл руды: гранёный ромб.
+fn ore_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    fill(
+        painter,
+        rect,
+        &[
+            (0.5, 0.08),
+            (0.88, 0.44),
+            (0.5, 0.94),
+            (0.12, 0.44),
+        ],
+        color,
+    );
+    // Огранка: нижняя половина темнее, по центру блеск.
+    stroke_path(painter, rect, &[(0.12, 0.44), (0.88, 0.44)], 1.6, DETAIL);
+    stroke_path(painter, rect, &[(0.5, 0.08), (0.5, 0.94)], 1.2, DETAIL);
+}
+
+/// Годзилла: тяжёлый силуэт со спинными шипами.
+fn godzilla_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    // Спинные шипы.
+    for (x, height) in [(0.22, 0.3), (0.4, 0.42), (0.58, 0.36)] {
+        fill(
+            painter,
+            rect,
+            &[
+                (x, 0.5 - height),
+                (x + 0.14, 0.46),
+                (x - 0.02, 0.46),
+            ],
+            color,
+        );
+    }
+    // Тело и хвост.
+    fill(
+        painter,
+        rect,
+        &[
+            (0.26, 0.42),
+            (0.74, 0.38),
+            (0.8, 0.62),
+            (0.62, 0.86),
+            (0.34, 0.88),
+            (0.22, 0.64),
+        ],
+        color,
+    );
+    stroke_path(painter, rect, &[(0.76, 0.7), (0.96, 0.86)], 2.6, color);
+    // Глаз.
+    disc(painter, rect, 0.36, 0.54, 0.045, DETAIL);
+}
+
+/// Взрывчатка: шашка с фитилём или знак радиации.
+fn explosive_icon(painter: &egui::Painter, rect: Rect, kind: Explosive, color: Color32) {
+    if kind == Explosive::Nuke {
+        let center = point(rect, 0.5, 0.5);
+        let radius = rect.width().min(rect.height()) * 0.34;
+        painter.circle_stroke(center, radius, Stroke::new(2.0_f32, color));
+        for index in 0..3 {
+            let angle = std::f32::consts::TAU * index as f32 / 3.0 - std::f32::consts::FRAC_PI_2;
+            let inner = center + egui::vec2(angle.cos(), angle.sin()) * radius * 0.32;
+            let outer = center + egui::vec2(angle.cos(), angle.sin()) * radius;
+            painter.line_segment([inner, outer], Stroke::new(2.4_f32, color));
+        }
+        disc(painter, rect, 0.5, 0.5, 0.07, color);
+        return;
+    }
+    // Динамит: три шашки и фитиль.
+    for offset in [0.3, 0.46, 0.62] {
+        let rect_part = Rect::from_min_max(
+            point(rect, offset, 0.38),
+            point(rect, offset + 0.14, 0.9),
+        );
+        painter.rect_filled(rect_part, CornerRadius::same(3), color);
+    }
+    stroke_path(painter, rect, &[(0.68, 0.38), (0.82, 0.18)], 2.0, color);
+    disc(painter, rect, 0.84, 0.14, 0.07, color);
+}
+
 
 /// Иконка стихии.
 pub fn weather_icon(painter: &egui::Painter, rect: Rect, weather: Weather, color: Color32) {

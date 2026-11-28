@@ -96,6 +96,27 @@ const CAMPFIRE: [&str; 4] = [".f..", "f#f.", ".#w#", "wwww"];
 const RUIN: [&str; 3] = ["#.#.", ".###", "#.##"];
 const BOAT: [&str; 4] = ["..s..", "..s..", "hhshh", ".hhh."];
 const PORT: [&str; 4] = ["..p..", "..p..", "wwwww", "dwwwd"];
+const LABORATORY: [&str; 6] = [
+    ".g.g.g.",
+    "bbbbbbb",
+    "bgbgbgb",
+    "bgbgbgb",
+    "bbbbbbb",
+    "ddddddd",
+];
+const GODZILLA: [&str; 11] = [
+    "..v.v.v..",
+    ".vvvvvvv.",
+    "..ggggg..",
+    ".ggggggg.",
+    "gg.ggg.gg",
+    "gg.ggg.gg",
+    ".ggggggg.",
+    "..ggggg..",
+    "..gg.gg..",
+    "..gg.gg..",
+    ".ggg.ggg.",
+];
 
 /// Рисует существо, стоящее на тайле.
 ///
@@ -113,7 +134,12 @@ pub fn draw_entity(
     variant: u8,
     moving: bool,
 ) {
-    let scale = (px_per_tile / 3).max(1);
+    // Годзилла рисуется крупнее прочих: она должна занимать несколько тайлов.
+    let scale = if species.is_giant() {
+        (px_per_tile / 2).max(2)
+    } else {
+        (px_per_tile / 3).max(1)
+    };
     let rows: &[&str] = match species {
         Species::Human => {
             if moving {
@@ -127,6 +153,7 @@ pub fn draw_entity(
         Species::Wolf => &WOLF[..],
         Species::Zombie => &ZOMBIE[..],
         Species::Boat => &BOAT[..],
+        Species::Godzilla => &GODZILLA[..],
     };
 
     let (art_w, art_h) = art_size(rows);
@@ -173,12 +200,23 @@ pub fn draw_entity(
             _ => Some(cloth),
         },
         'l' => Some(palette::DEER_LIGHT),
+        'g' => Some(if variant % 2 == 0 {
+            palette::GODZILLA
+        } else {
+            palette::GODZILLA_DARK
+        }),
+        'v' => Some(palette::GODZILLA_SPIKE),
         _ => None,
     });
 
     // Глаза хищников — заметная деталь на маленьком экране.
     if species == Species::Wolf {
         painter.blend_px(art_w / 2, 0, palette::EMBER, 0.85);
+    }
+    // Глаза годзиллы горят.
+    if species == Species::Godzilla {
+        painter.blend_px(art_w / 2 - 2, 3, palette::EMBER, 0.9);
+        painter.blend_px(art_w / 2 + 2, 3, palette::EMBER, 0.9);
     }
 }
 
@@ -201,6 +239,7 @@ pub fn draw_building(
         BuildingKind::Campfire => &CAMPFIRE[..],
         BuildingKind::Ruin => &RUIN[..],
         BuildingKind::Port => &PORT[..],
+        BuildingKind::Laboratory => &LABORATORY[..],
     };
     let (art_w, art_h) = art_size(rows);
     let origin_x = center_x - art_w * scale / 2;
@@ -251,6 +290,25 @@ pub fn draw_building(
                 '#' => Some(palette::STONE),
                 _ => None,
             });
+        }
+        BuildingKind::Laboratory => {
+            if completion >= 1.0 {
+                painter.art(rows, |symbol| match symbol {
+                    'b' => Some(palette::BRICK),
+                    'd' => Some(palette::STONE),
+                    'g' => Some(if variant % 2 == 0 {
+                        palette::GLASS
+                    } else {
+                        palette::GLASS_DARK
+                    }),
+                    _ => None,
+                });
+                // Антенна и флаг страны.
+                painter.px(art_w / 2, -1, palette::STEEL);
+                painter.px(art_w - 1, 0, nation_color);
+            } else {
+                draw_site(&mut painter, rows, completion, nation_color);
+            }
         }
         BuildingKind::Port => {
             if completion >= 1.0 {

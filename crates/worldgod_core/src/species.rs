@@ -16,17 +16,20 @@ pub enum Species {
     Zombie = 4,
     /// Лодка: плавает по воде, принадлежит стране, её можно разломать.
     Boat = 5,
+    /// Годзилла: гигантский монстр, ломает дома и не боится армий.
+    Godzilla = 6,
 }
 
 impl Species {
     /// Все виды.
-    pub const ALL: [Species; 6] = [
+    pub const ALL: [Species; 7] = [
         Self::Human,
         Self::Soldier,
         Self::Deer,
         Self::Wolf,
         Self::Zombie,
         Self::Boat,
+        Self::Godzilla,
     ];
 
     /// Характеристики вида.
@@ -43,6 +46,7 @@ impl Species {
             Self::Wolf => "Волк",
             Self::Zombie => "Зомби",
             Self::Boat => "Лодка",
+            Self::Godzilla => "Годзилла",
         }
     }
 
@@ -55,6 +59,7 @@ impl Species {
             Self::Wolf => "волка",
             Self::Zombie => "зомби",
             Self::Boat => "лодки",
+            Self::Godzilla => "годзиллы",
         }
     }
 
@@ -65,7 +70,12 @@ impl Species {
 
     /// Монстры — враги людей.
     pub fn is_monster(self) -> bool {
-        matches!(self, Self::Wolf | Self::Zombie)
+        matches!(self, Self::Wolf | Self::Zombie | Self::Godzilla)
+    }
+
+    /// Гигант: рисуется крупнее и сносит постройки вокруг себя.
+    pub fn is_giant(self) -> bool {
+        self == Self::Godzilla
     }
 
     /// Лодка — транспорт страны, а не живое существо.
@@ -150,7 +160,7 @@ pub struct Stats {
 }
 
 /// Таблица характеристик, индексированная значением [`Species`].
-pub static STATS: [Stats; 6] = [
+pub static STATS: [Stats; 7] = [
     // Человек: слабый, но упорный строитель.
     Stats {
         max_hp: 100,
@@ -235,6 +245,20 @@ pub static STATS: [Stats; 6] = [
         wood_for_nation: 0,
         wood_for_house: 0,
     },
+    // Годзилла: огромный, почти неубиваемый, ломает всё подряд.
+    Stats {
+        max_hp: 3_000,
+        damage: 80,
+        attack_range: 2.6,
+        attack_cooldown: 8,
+        move_interval: 6,
+        aggro_radius: 16,
+        flee_radius: 0,
+        max_age: 500_000,
+        hunger_rate: 0,
+        wood_for_nation: 0,
+        wood_for_house: 0,
+    },
 ];
 
 #[cfg(test)]
@@ -277,11 +301,16 @@ mod tests {
         assert!(Species::Soldier.is_humanoid());
         assert!(Species::Wolf.is_monster());
         assert!(Species::Zombie.is_monster());
+        assert!(Species::Godzilla.is_monster());
+        assert!(Species::Godzilla.is_giant());
+        assert!(!Species::Wolf.is_giant());
+        assert!(Species::Godzilla.hostile_to(Species::Human));
         assert!(Species::Deer.is_animal());
         assert!(Species::Boat.is_boat());
         assert!(Species::Boat.is_water_unit());
         assert!(!Species::Human.is_water_unit());
         assert!(!Species::Boat.hostile_to(Species::Human));
+        assert_eq!(Species::Godzilla.stats().max_hp, STATS[6].max_hp);
         assert!(Species::Human.can_found_nation());
         assert!(!Species::Soldier.can_found_nation());
     }

@@ -44,6 +44,12 @@ pub struct Nation {
     pub losses: u32,
     /// Сколько жителей было за всю историю.
     pub peak_population: u32,
+    /// Маска изученных разработок ([`crate::tech::Tech::bit`]).
+    pub tech: u8,
+    /// Накопленные очки исследований.
+    pub research: u32,
+    /// Сколько руды добыто за партию.
+    pub ore_mined: u32,
 }
 
 impl Nation {
@@ -61,7 +67,34 @@ impl Nation {
             kills: 0,
             losses: 0,
             peak_population: 0,
+            tech: 0,
+            research: 0,
+            ore_mined: 0,
         }
+    }
+
+    /// Знает ли страна разработку.
+    pub fn knows(&self, tech: crate::tech::Tech) -> bool {
+        self.tech & tech.bit() != 0
+    }
+
+    /// Изучает разработку. Возвращает `true`, если она новая.
+    pub fn learn(&mut self, tech: crate::tech::Tech) -> bool {
+        if self.knows(tech) {
+            return false;
+        }
+        self.tech |= tech.bit();
+        true
+    }
+
+    /// Следующая неизученная разработка.
+    pub fn next_tech(&self) -> Option<crate::tech::Tech> {
+        crate::tech::next_unknown(self.tech)
+    }
+
+    /// Подпись изученного для карточки страны.
+    pub fn tech_ru(&self) -> String {
+        crate::tech::known_ru(self.tech)
     }
 
     /// Сколько жителей страна может прокормить при текущем числе домов.

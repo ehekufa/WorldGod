@@ -18,11 +18,19 @@ pub enum BuildingKind {
     Ruin = 2,
     /// Порт: от него страна спускает на воду лодки.
     Port = 3,
+    /// Лаборатория: собственный дом страны, где копятся разработки.
+    Laboratory = 4,
 }
 
 impl BuildingKind {
     /// Все виды.
-    pub const ALL: [BuildingKind; 4] = [Self::Campfire, Self::House, Self::Ruin, Self::Port];
+    pub const ALL: [BuildingKind; 5] = [
+        Self::Campfire,
+        Self::House,
+        Self::Ruin,
+        Self::Port,
+        Self::Laboratory,
+    ];
 
     /// Название для интерфейса.
     pub fn name_ru(self) -> &'static str {
@@ -31,12 +39,13 @@ impl BuildingKind {
             Self::House => "Дом",
             Self::Ruin => "Руины",
             Self::Port => "Порт",
+            Self::Laboratory => "Лаборатория",
         }
     }
 
     /// Занимает ли клетку целиком (по ней нельзя ходить).
     pub fn blocks_movement(self) -> bool {
-        matches!(self, Self::House)
+        matches!(self, Self::House | Self::Laboratory)
     }
 
     /// Сколько рабочих единиц нужно на постройку.
@@ -46,6 +55,7 @@ impl BuildingKind {
             Self::House => 40,
             Self::Ruin => 1,
             Self::Port => 60,
+            Self::Laboratory => 80,
         }
     }
 
@@ -56,12 +66,16 @@ impl BuildingKind {
             Self::House => 90,
             Self::Ruin => 0,
             Self::Port => 130,
+            Self::Laboratory => 140,
         }
     }
 
     /// Можно ли сломать постройку в бою.
     pub fn can_be_destroyed(self) -> bool {
-        matches!(self, Self::House | Self::Port | Self::Campfire)
+        matches!(
+            self,
+            Self::House | Self::Port | Self::Campfire | Self::Laboratory
+        )
     }
 
     /// Ставится ли порт только у воды (на берегу).
@@ -77,6 +91,15 @@ impl BuildingKind {
         }
     }
 
+    /// Даёт ли постройка очки исследований за тик науки.
+    pub fn research_per_tick(self) -> u32 {
+        match self {
+            Self::Laboratory => 3,
+            Self::Campfire | Self::House => 1,
+            _ => 0,
+        }
+    }
+
     /// Нужен ли для неё фундамент из готовых построек.
     pub fn is_permanent(self) -> bool {
         self != Self::Ruin
@@ -87,6 +110,7 @@ impl BuildingKind {
         match self {
             Self::Campfire => 9,
             Self::House | Self::Port => 4,
+            Self::Laboratory => 5,
             Self::Ruin => 0,
         }
     }
@@ -251,6 +275,9 @@ mod tests {
         assert!(!BuildingKind::Ruin.can_be_destroyed());
         assert!(!BuildingKind::Ruin.is_permanent());
         assert_eq!(BuildingKind::Port.name_ru(), "Порт");
+        assert_eq!(BuildingKind::Laboratory.name_ru(), "Лаборатория");
+        assert!(BuildingKind::Laboratory.can_be_destroyed());
+        assert!(BuildingKind::Laboratory.research_per_tick() > 0);
     }
 
     #[test]

@@ -57,6 +57,10 @@ pub fn draw(
                 }
             }
 
+            if let Some(ore) = tile.ore_kind() {
+                ore_detail(frame, sx, sy, px, ore, tile.ore_amount, tile.variant);
+            }
+
             if terrain.is_water() && world.land_neighbors(pos) > 0 {
                 coast_foam(frame, sx, sy, px, world, pos, time);
             }
@@ -71,6 +75,40 @@ pub fn draw(
                     }
                 }
             }
+        }
+    }
+}
+
+/// Кристаллы руды: чем богаче залежь, тем больше блеска.
+fn ore_detail(
+    frame: &mut Frame,
+    sx: i32,
+    sy: i32,
+    px: i32,
+    ore: worldgod_core::ore::OreKind,
+    amount: u8,
+    variant: u8,
+) {
+    let color = ore.color_rgb();
+    let gems = 1 + (amount.min(6) as i32 - 1) / 2;
+    let spots: [(i32, i32); 3] = match variant % 3 {
+        0 => [(1, 1), (2, 2), (1, 2)],
+        1 => [(2, 1), (1, 2), (2, 2)],
+        _ => [(1, 2), (2, 1), (2, 2)],
+    };
+    let unit = (px / 4).max(1);
+    for (index, (dx, dy)) in spots.iter().take(gems as usize).enumerate() {
+        let x = sx + dx * (px / 4).max(1);
+        let y = sy + dy * (px / 4).max(1);
+        frame.fill_rect(x, y, unit as u32, unit as u32, color);
+        if index == 0 {
+            frame.fill_rect(
+                x + unit,
+                y,
+                (unit / 2).max(1) as u32,
+                (unit / 2).max(1) as u32,
+                lighten(color, 0.45),
+            );
         }
     }
 }

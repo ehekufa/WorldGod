@@ -55,8 +55,9 @@ fn attack_entity(sim: &mut Simulation, index: usize, target: crate::entity::Enti
     }
     sim.entities[index].attack_timer = stats.attack_cooldown;
 
-    let damage = stats.damage.max(1);
-    sim.entities[target_index].hp -= damage;
+    // Урон с учётом способностей: «огненный удар» и «режим бога» бьют сильнее.
+    let damage = sim.entities[index].attack_damage(stats.damage);
+    sim.hurt_entity(target_index, damage);
     sim.entities[target_index].last_attacker = Some(sim.entities[index].id);
 
     if sim.entities[target_index].is_alive() {
