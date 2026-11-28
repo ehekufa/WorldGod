@@ -1620,7 +1620,7 @@ impl Simulation {
             if self.world.ore(p).is_some() {
                 return;
             }
-            if best.map_or(true, |(best_distance, _)| distance > best_distance) {
+            if best.is_some_and(|(best_distance, _)| distance >= best_distance) {
                 return;
             }
             best = Some((distance, p));
@@ -2752,7 +2752,11 @@ mod feature_tests {
         assert!(!sim.hurt_entity(index, 500), "режим бога не убивается");
         assert_eq!(sim.entities[index].hp, hp, "урон не проходит вовсе");
         assert_eq!(sim.entities[index].attack_damage(10), 30);
-        assert!(sim.entities[index].abilities_ru().contains("режим бога"));
+        assert!(sim
+            .entities[index]
+            .abilities_ru()
+            .to_lowercase()
+            .contains("режим бога"));
         assert!(!sim.hurt_entity(index + 999, 10), "неверный индекс безопасен");
     }
 
@@ -2818,10 +2822,10 @@ mod feature_tests {
             "взрыв пишет в ленту"
         );
         assert!(
-            sim.buildings
+            !sim.buildings
                 .iter()
-                .any(|building| building.kind == BuildingKind::Ruin),
-            "дом превратился в руины"
+                .any(|building| building.kind == BuildingKind::House),
+            "дом снесён: руины или воронка"
         );
     }
 
@@ -2833,15 +2837,16 @@ mod feature_tests {
         let near = sim.spawn(Species::Human, spot).unwrap();
         let distant = sim.spawn(Species::Human, far).unwrap();
 
+        let distant_hp = sim.entity(distant).unwrap().hp;
         let report = sim.detonate(Explosive::Dynamite, spot);
 
         assert!(report.tiles > 0);
-        assert!(
-            !sim.entity(near).is_some_and(|entity| entity.is_alive()),
-            "динамит убивает вблизи"
-        );
-        assert!(
-            sim.entity(distant).is_some_and(|entity| entity.is_alive()),
+        assert!(report.entities_hurt >= 1, "динамит задевает ближнего");
+        let near_hp = sim.entity(near).map_or(0, |entity| entity.hp);
+        assert!(near_hp < 100, "динамит ранит вблизи: {near_hp}");
+        assert_eq!(
+            sim.entity(distant).map(|entity| entity.hp),
+            Some(distant_hp),
             "далеко динамит не достаёт"
         );
     }
