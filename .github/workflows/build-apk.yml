@@ -92,6 +92,12 @@ jobs:
           open("report.md", "w", encoding="utf-8").write(report)
           open("build-log.txt", "w", encoding="utf-8").write(text)
           print(body[-8000:])
+          # Журнал Actions скачать не всегда можно, а аннотации check-run
+          # отдаются обычным API — дублируем туда строки про ошибки.
+          key = [l for l in lines if "error" in l.lower() or "failed" in l.lower()]
+          for line in (key or lines)[-10:]:
+            msg = line.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            print(f"::error title=apk::{msg[:400]}")
           EOF
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
@@ -185,6 +191,10 @@ jobs:
           open("report.md", "w", encoding="utf-8").write(report)
           open("build-log-arm64.txt", "w", encoding="utf-8").write(text)
           print(body[-8000:])
+          key = [l for l in lines if "error" in l.lower() or "failed" in l.lower()]
+          for line in (key or lines)[-10:]:
+            msg = line.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            print(f"::error title=apk-arm64::{msg[:400]}")
           EOF
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
