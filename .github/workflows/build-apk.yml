@@ -77,6 +77,14 @@ jobs:
           key: android-apk
           workspaces: ". -> target"
 
+      - name: Освободить место на диске
+        # Release-сборка трёх ABI и стек wgpu/glow занимают сотни мегабайт,
+        # а на образе раннера многое занято тулчейнами, которые нам не нужны.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/system-images \
+            /opt/ghc /usr/local/share/boost /usr/share/swift || true
+          df -h / | tail -1
+
       - name: Установка cargo-apk
         run: cargo install cargo-apk --version "^0.10"
 
@@ -93,6 +101,7 @@ jobs:
           cargo apk build --release \
             --manifest-path crates/worldgod_app/Cargo.toml > build.log 2>&1
           status=$?
+          df -h / | tail -1
           python3 - "$status" <<'EOF'
           import re, sys
 
@@ -106,13 +115,20 @@ jobs:
           report = f"**cargo apk build** (код {status})\n```\n{body}\n```\n"
           open("report.md", "w", encoding="utf-8").write(report)
           open("build-log.txt", "w", encoding="utf-8").write(text)
-          print(body[-8000:])
+          print(body[-12000:])
           # Журнал Actions скачать не всегда можно, а аннотации check-run
           # отдаются обычным API — дублируем туда строки про ошибки.
-          key = [l for l in lines if "error" in l.lower() or "failed" in l.lower()]
-          for line in (key or lines)[-10:]:
-            msg = line.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-            print(f"::error title=apk::{msg[:400]}")
+          # Журнал запуска из песочницы не скачивается, а аннотации
+          # check-run отдаются обычным REST API — хвост лога уезжает
+          # туда одной длинной аннотацией.
+          tail_text = "\n".join(lines[-120:])
+          escaped = (
+              tail_text[-20000:]
+              .replace("%", "%25")
+              .replace("\r", "%0D")
+              .replace("\n", "%0A")
+          )
+          print(f"::error title=apk::код {status}; хвост build.log:%0A{escaped}")
           EOF
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
@@ -190,6 +206,14 @@ jobs:
           key: android-apk-arm64
           workspaces: ". -> target"
 
+      - name: Освободить место на диске
+        # Release-сборка трёх ABI и стек wgpu/glow занимают сотни мегабайт,
+        # а на образе раннера многое занято тулчейнами, которые нам не нужны.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/system-images \
+            /opt/ghc /usr/local/share/boost /usr/share/swift || true
+          df -h / | tail -1
+
       - run: cargo install cargo-apk --version "^0.10"
 
       - name: Сборка
@@ -203,6 +227,7 @@ jobs:
           cargo apk build --release --target aarch64-linux-android \
             --manifest-path crates/worldgod_app/Cargo.toml > build.log 2>&1
           status=$?
+          df -h / | tail -1
           python3 - "$status" <<'EOF'
           import re, sys
 
@@ -215,11 +240,18 @@ jobs:
           report = f"**cargo apk build (arm64)** (код {status})\n```\n{body}\n```\n"
           open("report.md", "w", encoding="utf-8").write(report)
           open("build-log-arm64.txt", "w", encoding="utf-8").write(text)
-          print(body[-8000:])
-          key = [l for l in lines if "error" in l.lower() or "failed" in l.lower()]
-          for line in (key or lines)[-10:]:
-            msg = line.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-            print(f"::error title=apk-arm64::{msg[:400]}")
+          print(body[-12000:])
+          # Журнал запуска из песочницы не скачивается, а аннотации
+          # check-run отдаются обычным REST API — хвост лога уезжает
+          # туда одной длинной аннотацией.
+          tail_text = "\n".join(lines[-120:])
+          escaped = (
+              tail_text[-20000:]
+              .replace("%", "%25")
+              .replace("\r", "%0D")
+              .replace("\n", "%0A")
+          )
+          print(f"::error title=apk-arm64::код {status}; хвост build.log:%0A{escaped}")
           EOF
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
