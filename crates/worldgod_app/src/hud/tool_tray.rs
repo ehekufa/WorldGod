@@ -21,24 +21,22 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         });
     }
 
-    egui::ScrollArea::horizontal()
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                for tool in Tool::ALL {
-                    let selected = state.tool.tool == tool;
-                    let response = widgets::tool_button(ui, tool, selected);
-                    if response.clicked() {
-                        state.tool.tool = tool;
-                        if tool != Tool::Inspect {
-                            state.sim.select(None);
-                        }
-                    }
-                    response.on_hover_text(tool.hint_ru());
+    // Кнопки переносятся на вторую строку: на телефоне все инструменты
+    // видны сразу, без горизонтальной прокрутки.
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+        for tool in Tool::ALL {
+            let selected = state.tool.tool == tool;
+            let response = widgets::tool_button(ui, tool, selected);
+            if response.clicked() {
+                state.tool.tool = tool;
+                if tool != Tool::Inspect {
+                    state.sim.select(None);
                 }
-            });
-        });
+            }
+            response.on_hover_text(tool.hint_ru());
+        }
+    });
 
     if state.tool.tool.is_terrain() {
         ui.horizontal(|ui| {
@@ -50,10 +48,14 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                 state.tool.radius = radius;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new(state.status_line())
-                        .size(11.0)
-                        .color(theme::TEXT_DIM),
+                // Обрезаем аккуратно многоточием, а не за краем экрана.
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(state.status_line())
+                            .size(11.0)
+                            .color(theme::TEXT_DIM),
+                    )
+                    .truncate(),
                 );
             });
         });

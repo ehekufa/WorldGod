@@ -14,24 +14,38 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     let stats = state.sim.stats;
 
     ui.horizontal(|ui| {
-        widgets::stat_chip(ui, "люди", &stats.population.to_string(), theme::SUCCESS);
-        widgets::stat_chip(ui, "страны", &stats.nations.to_string(), theme::ACCENT);
-        widgets::stat_chip(ui, "монстры", &stats.monsters.to_string(), theme::DANGER);
-        if stats.wars > 0 {
-            widgets::stat_chip(ui, "войны", &stats.wars.to_string(), theme::DANGER);
+        // Справа живут часы и две кнопки — под чипы оставляем остальное,
+        // чтобы на узком экране они не уезжали за край.
+        let mut budget = (ui.available_width() - 150.0).max(0.0);
+        // Порядок важен: первыми идут главные чипы, хвостовые уходят
+        // за край только когда экран совсем узкий.
+        let chips: [(&str, &str, &str, u32, Color32); 6] = [
+            ("человек", "человека", "людей", stats.population, theme::SUCCESS),
+            ("страна", "страны", "стран", stats.nations, theme::ACCENT),
+            ("монстр", "монстра", "монстров", stats.monsters, theme::DANGER),
+            ("война", "войны", "войн", stats.wars, theme::DANGER),
+            ("союз", "союза", "союзов", stats.alliances, theme::SUCCESS),
+            ("лодка", "лодки", "лодок", stats.boats, theme::ACCENT),
+        ];
+        for (one, few, many, value, color) in chips {
+            // Войны, союзы и лодки показываем только когда они есть.
+            if !matches!(one, "человек" | "страна" | "монстр") && value == 0 {
+                continue;
+            }
+            let label = plural_ru(value, one, few, many);
+            let text = value.to_string();
+            let width = widgets::stat_chip_width(ui, label, &text);
+            if width > budget {
+                break;
+            }
+            budget -= width + 8.0;
+            widgets::stat_chip(ui, label, &text, color);
         }
-        if stats.alliances > 0 {
-            widgets::stat_chip(ui, "союзы", &stats.alliances.to_string(), theme::SUCCESS);
+        // Доля суши — не счётчик, поэтому подпись постоянная.
+        let land = format!("{:.0}%", stats.land_fraction * 100.0);
+        if widgets::stat_chip_width(ui, "суша", &land) <= budget {
+            widgets::stat_chip(ui, "суша", &land, theme::WARNING);
         }
-        if stats.boats > 0 {
-            widgets::stat_chip(ui, "лодки", &stats.boats.to_string(), theme::ACCENT);
-        }
-        widgets::stat_chip(
-            ui,
-            "суша",
-            &format!("{:.0}%", stats.land_fraction * 100.0),
-            theme::WARNING,
-        );
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let settings = widgets::icon_button(ui, 34.0, |painter, rect, color| {
@@ -66,10 +80,26 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         };
         let color = event_color(event.kind);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 5.0;
-            ui.label(RichText::new(event.kind.prefix()).size(11.0).color(color));
+            ui.spacing_mut().item_spacing.x = 6.0;
+            // Точку рисуем сами: символы вроде «⚑» или «⚔» есть не во всех
+            // шрифтах и на телефоне превращались в пустой квадратик.
+            let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+            ui.painter().circle_filled(dot.center(), 3.5, color);
             ui.label(RichText::new(&event.text).size(11.5).color(theme::TEXT_DIM));
         });
+    }
+}
+
+/// Русская форма слова для числа: 1 страна, 2 страны, 5 стран.
+fn plural_ru<'a>(n: u32, one: &'a str, few: &'a str, many: &'a str) -> &'a str {
+    let tail = n % 100;
+    if (11..=14).contains(&tail) {
+        return many;
+    }
+    match n % 10 {
+        1 => one,
+        2..=4 => few,
+        _ => many,
     }
 }
 
@@ -93,6 +123,17 @@ pub fn speed_hint(speed: Speed) -> &'static str {
 mod tests {
     use super::*;
     use worldgod_core::WorldSize;
+
+    #[test]
+    fn plural_forms() {
+        assert_eq!(plural_ru(0, "страна", "страны", "стран"), "стран");
+        assert_eq!(plural_ru(1, "страна", "страны", "стран"), "страна");
+        assert_eq!(plural_ru(3, "страна", "страны", "стран"), "страны");
+        assert_eq!(plural_ru(5, "страна", "страны", "стран"), "стран");
+        assert_eq!(plural_ru(11, "страна", "страны", "стран"), "стран");
+        assert_eq!(plural_ru(21, "страна", "страны", "стран"), "страна");
+        assert_eq!(plural_ru(112, "страна", "страны", "стран"), "стран");
+    }
 
     #[test]
     fn top_bar_renders() {

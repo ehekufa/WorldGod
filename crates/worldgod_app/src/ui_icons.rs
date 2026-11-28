@@ -196,67 +196,132 @@ fn human_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
 }
 
 fn soldier_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
-    disc(painter, rect, 0.44, 0.26, 0.12, color);
+    // Шлем: купол и козырёк.
+    disc(painter, rect, 0.42, 0.24, 0.14, color);
     fill(
         painter,
         rect,
-        &[(0.3, 0.88), (0.44, 0.42), (0.58, 0.88)],
+        &[(0.26, 0.32), (0.58, 0.32), (0.56, 0.42), (0.28, 0.42)],
         color,
     );
+    // Плечи и корпус.
     fill(
         painter,
         rect,
-        &[(0.26, 0.42), (0.62, 0.42), (0.58, 0.58), (0.3, 0.58)],
+        &[(0.22, 0.92), (0.34, 0.46), (0.5, 0.46), (0.56, 0.92)],
         color,
     );
-    stroke_path(painter, rect, &[(0.62, 0.78), (0.86, 0.2)], 2.2, color);
-    stroke_path(painter, rect, &[(0.22, 0.3), (0.42, 0.2)], 2.0, color);
-}
-
-fn deer_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
-    fill(
-        painter,
-        rect,
-        &[(0.3, 0.78), (0.5, 0.36), (0.72, 0.78)],
-        color,
-    );
-    stroke_path(painter, rect, &[(0.44, 0.4), (0.3, 0.16)], 1.8, color);
-    stroke_path(painter, rect, &[(0.56, 0.4), (0.7, 0.16)], 1.8, color);
-    stroke_path(painter, rect, &[(0.3, 0.16), (0.22, 0.24)], 1.6, color);
-    stroke_path(painter, rect, &[(0.7, 0.16), (0.78, 0.24)], 1.6, color);
-    stroke_path(painter, rect, &[(0.32, 0.3), (0.44, 0.34)], 1.4, color);
-    stroke_path(painter, rect, &[(0.68, 0.3), (0.56, 0.34)], 1.4, color);
-}
-
-fn wolf_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    // Щит справа — по нему воина и узнаём.
     fill(
         painter,
         rect,
         &[
-            (0.18, 0.66),
-            (0.24, 0.24),
-            (0.42, 0.44),
-            (0.58, 0.44),
-            (0.76, 0.24),
-            (0.82, 0.66),
-            (0.5, 0.86),
+            (0.58, 0.46),
+            (0.9, 0.46),
+            (0.9, 0.72),
+            (0.74, 0.92),
+            (0.58, 0.72),
         ],
         color,
     );
-    disc(painter, rect, 0.38, 0.56, 0.045, Color32::from_rgb(255, 178, 66));
-    disc(painter, rect, 0.62, 0.56, 0.045, Color32::from_rgb(255, 178, 66));
+    stroke_path(
+        painter,
+        rect,
+        &[(0.64, 0.68), (0.84, 0.68)],
+        2.0,
+        DETAIL,
+    );
+    stroke_path(
+        painter,
+        rect,
+        &[(0.74, 0.54), (0.74, 0.84)],
+        2.0,
+        DETAIL,
+    );
 }
 
-fn zombie_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
-    disc(painter, rect, 0.5, 0.28, 0.12, color);
+fn deer_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    // Ветвистые рога — главный признак оленя.
+    stroke_path(painter, rect, &[(0.44, 0.44), (0.34, 0.12)], 2.0, color);
+    stroke_path(painter, rect, &[(0.38, 0.28), (0.2, 0.2)], 1.8, color);
+    stroke_path(painter, rect, &[(0.56, 0.44), (0.66, 0.12)], 2.0, color);
+    stroke_path(painter, rect, &[(0.62, 0.28), (0.8, 0.2)], 1.8, color);
+    // Уши.
     fill(
         painter,
         rect,
-        &[(0.36, 0.88), (0.5, 0.44), (0.64, 0.88)],
+        &[(0.28, 0.56), (0.42, 0.4), (0.44, 0.62)],
         color,
     );
-    stroke_path(painter, rect, &[(0.36, 0.52), (0.14, 0.7)], 2.0, color);
-    stroke_path(painter, rect, &[(0.64, 0.52), (0.86, 0.7)], 2.0, color);
+    fill(
+        painter,
+        rect,
+        &[(0.72, 0.56), (0.58, 0.4), (0.56, 0.62)],
+        color,
+    );
+    // Морда.
+    fill(
+        painter,
+        rect,
+        &[(0.34, 0.62), (0.66, 0.62), (0.58, 0.92), (0.42, 0.92)],
+        color,
+    );
+    disc(painter, rect, 0.42, 0.68, 0.05, DETAIL);
+    disc(painter, rect, 0.58, 0.68, 0.05, DETAIL);
+}
+
+fn wolf_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    // Уши отдельными треугольниками: общий силуэт с вырезами
+    // рисовался бы как выпуклая фигура без ушей.
+    fill(
+        painter,
+        rect,
+        &[(0.18, 0.14), (0.42, 0.42), (0.24, 0.48)],
+        color,
+    );
+    fill(
+        painter,
+        rect,
+        &[(0.82, 0.14), (0.58, 0.42), (0.76, 0.48)],
+        color,
+    );
+    // Голова.
+    fill(
+        painter,
+        rect,
+        &[
+            (0.26, 0.44),
+            (0.74, 0.44),
+            (0.68, 0.7),
+            (0.5, 0.78),
+            (0.32, 0.7),
+        ],
+        color,
+    );
+    // Морда.
+    fill(
+        painter,
+        rect,
+        &[(0.42, 0.72), (0.58, 0.72), (0.5, 0.94)],
+        color,
+    );
+    disc(painter, rect, 0.38, 0.56, 0.055, DETAIL);
+    disc(painter, rect, 0.62, 0.56, 0.055, DETAIL);
+}
+
+fn zombie_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    // Сгорбленная фигура с вытянутыми вперёд руками.
+    disc(painter, rect, 0.3, 0.24, 0.13, color);
+    fill(
+        painter,
+        rect,
+        &[(0.16, 0.94), (0.26, 0.42), (0.42, 0.42), (0.46, 0.94)],
+        color,
+    );
+    stroke_path(painter, rect, &[(0.38, 0.48), (0.88, 0.38)], 2.6, color);
+    stroke_path(painter, rect, &[(0.38, 0.62), (0.9, 0.62)], 2.6, color);
+    disc(painter, rect, 0.32, 0.2, 0.045, DETAIL);
+    disc(painter, rect, 0.26, 0.28, 0.045, DETAIL);
 }
 
 fn inspect_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
@@ -267,6 +332,9 @@ fn inspect_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
 }
 
 // --- помощники --------------------------------------------------------------
+
+/// Цвет «прорези» внутри иконки: подложка кнопки почти чёрная.
+const DETAIL: Color32 = Color32::from_rgb(18, 20, 26);
 
 fn point(rect: Rect, x: f32, y: f32) -> Pos2 {
     egui::pos2(

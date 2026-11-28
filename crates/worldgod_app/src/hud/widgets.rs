@@ -7,6 +7,25 @@ use worldgod_core::brush::Tool;
 use crate::theme;
 use crate::ui_icons;
 
+/// Ширина чипа статистики — чтобы верхняя панель могла решить,
+/// влезает ли очередной чип в экран.
+pub fn stat_chip_width(ui: &Ui, label: &str, value: &str) -> f32 {
+    let value_galley = ui
+        .painter()
+        .layout_no_wrap(value.to_owned(), FontId::proportional(13.5), theme::TEXT);
+    let label_galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), FontId::proportional(11.0), theme::TEXT_DIM);
+    PADDING * 2.0 + DOT + GAP + value_galley.size().x + GAP + label_galley.size().x
+}
+
+/// Точка-индикатор в чипе.
+const DOT: f32 = 7.0;
+/// Внутренние отступы чипа.
+const PADDING: f32 = 8.0;
+/// Промежуток между точкой, значением и подписью.
+const GAP: f32 = 5.0;
+
 /// Чип статистики: цветная точка, значение и подпись.
 pub fn stat_chip(ui: &mut Ui, label: &str, value: &str, color: Color32) {
     let value_font = FontId::proportional(13.5);
@@ -19,9 +38,9 @@ pub fn stat_chip(ui: &mut Ui, label: &str, value: &str, color: Color32) {
         .painter()
         .layout_no_wrap(label.to_owned(), label_font, theme::TEXT_DIM);
 
-    let dot = 7.0;
-    let padding = 8.0;
-    let gap = 5.0;
+    let dot = DOT;
+    let padding = PADDING;
+    let gap = GAP;
     let width = padding * 2.0 + dot + gap + value_galley.size().x + gap + label_galley.size().x;
     let height = 27.0;
 
@@ -73,7 +92,18 @@ pub fn icon_button(
 
 /// Кнопка инструмента: иконка + подпись.
 pub fn tool_button(ui: &mut Ui, tool: Tool, selected: bool) -> Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(56.0, 66.0), Sense::click());
+    tool_button_sized(ui, tool, selected, 50.0, 58.0)
+}
+
+/// Кнопка инструмента заданного размера (лоток подстраивается под экран).
+pub fn tool_button_sized(
+    ui: &mut Ui,
+    tool: Tool,
+    selected: bool,
+    width: f32,
+    height: f32,
+) -> Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), Sense::click());
 
     let background = if selected {
         theme::ACCENT_DARK
@@ -94,8 +124,8 @@ pub fn tool_button(ui: &mut Ui, tool: Tool, selected: bool) -> Response {
         );
         painter.rect_filled(
             Rect::from_min_size(
-                egui::pos2(rect.left() + 18.0, rect.bottom() - 5.0),
-                egui::vec2(rect.width() - 36.0, 2.5),
+                egui::pos2(rect.left() + 14.0, rect.bottom() - 4.5),
+                egui::vec2(rect.width() - 28.0, 2.5),
             ),
             CornerRadius::same(2),
             theme::ACCENT,
@@ -103,8 +133,8 @@ pub fn tool_button(ui: &mut Ui, tool: Tool, selected: bool) -> Response {
     }
 
     let icon_rect = Rect::from_center_size(
-        rect.center() - egui::vec2(0.0, 9.0),
-        egui::vec2(26.0, 26.0),
+        rect.center() - egui::vec2(0.0, 8.0),
+        egui::vec2(24.0, 24.0),
     );
     let icon_color = if selected {
         theme::ACCENT
@@ -114,10 +144,10 @@ pub fn tool_button(ui: &mut Ui, tool: Tool, selected: bool) -> Response {
     ui_icons::tool_icon(&painter.with_clip_rect(rect), icon_rect, tool, icon_color);
 
     painter.text(
-        egui::pos2(rect.center().x, rect.bottom() - 9.0),
+        egui::pos2(rect.center().x, rect.bottom() - 8.0),
         Align2::CENTER_BOTTOM,
         tool.label_ru(),
-        FontId::proportional(11.0),
+        FontId::proportional(10.0),
         if selected { theme::ACCENT } else { theme::TEXT_DIM },
     );
 

@@ -20,17 +20,31 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    /// Значок-префикс для ленты.
+    /// Значок-метка для текстовых логов.
+    ///
+    /// Только ASCII: в интерфейсе события помечаются нарисованной точкой,
+    /// потому что символы вроде «⚑» или «⚔» есть не во всех шрифтах
+    /// и на телефоне показывались пустым квадратиком.
     pub fn prefix(self) -> &'static str {
         match self {
-            Self::Nation => "⚑",
-            Self::Build => "⌂",
-            Self::Birth => "＋",
-            Self::Death => "✖",
-            Self::Combat => "⚔",
-            Self::Nature => "❖",
+            Self::Nation => "*",
+            Self::Build => "+",
+            Self::Birth => "+",
+            Self::Death => "x",
+            Self::Combat => "!",
+            Self::Nature => "~",
         }
     }
+
+    /// Все категории — для проверок в тестах.
+    pub const ALL: [Self; 6] = [
+        Self::Nation,
+        Self::Build,
+        Self::Birth,
+        Self::Death,
+        Self::Combat,
+        Self::Nature,
+    ];
 }
 
 /// Одно событие мира.
@@ -101,6 +115,18 @@ impl EventLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefixes_are_ascii() {
+        for kind in EventKind::ALL {
+            let prefix = kind.prefix();
+            assert!(!prefix.is_empty());
+            assert!(
+                prefix.is_ascii(),
+                "префикс {prefix:?} для {kind:?} должен быть ASCII"
+            );
+        }
+    }
 
     #[test]
     fn log_keeps_last_entries() {
