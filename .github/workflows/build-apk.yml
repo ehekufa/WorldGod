@@ -116,8 +116,6 @@ jobs:
           open("report.md", "w", encoding="utf-8").write(report)
           open("build-log.txt", "w", encoding="utf-8").write(text)
           print(body[-12000:])
-          # Журнал Actions скачать не всегда можно, а аннотации check-run
-          # отдаются обычным API — дублируем туда строки про ошибки.
           # Журнал запуска из песочницы не скачивается, а аннотации
           # check-run отдаются обычным REST API — хвост лога уезжает
           # туда одной длинной аннотацией.
@@ -129,6 +127,15 @@ jobs:
               .replace("\n", "%0A")
           )
           print(f"::error title=apk::код {status}; хвост build.log:%0A{escaped}")
+          print(f"строк в журнале: {len(lines)}")
+          for word in ("Finished", "Signing", "Error", "panicked", "SIGKILL", "No space"):
+              print(f"{word}: {text.count(word)}")
+          # Полный журнал одним архивом: аннотации отдаются обычным API,
+          # поэтому даже без доступа к логам Actions видно всю картину.
+          import base64, gzip
+          blob = base64.b64encode(gzip.compress(raw)).decode()
+          for i in range(0, min(len(blob), 440_000), 55_000):
+              print(f"::error title=apk-log {i//55000 + 1}::" + blob[i:i+55_000])
           EOF
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
@@ -252,6 +259,15 @@ jobs:
               .replace("\n", "%0A")
           )
           print(f"::error title=apk-arm64::код {status}; хвост build.log:%0A{escaped}")
+          print(f"строк в журнале: {len(lines)}")
+          for word in ("Finished", "Signing", "Error", "panicked", "SIGKILL", "No space"):
+              print(f"{word}: {text.count(word)}")
+          # Полный журнал одним архивом: аннотации отдаются обычным API,
+          # поэтому даже без доступа к логам Actions видно всю картину.
+          import base64, gzip
+          blob = base64.b64encode(gzip.compress(raw)).decode()
+          for i in range(0, min(len(blob), 440_000), 55_000):
+              print(f"::error title=apk-arm64-log {i//55000 + 1}::" + blob[i:i+55_000])
           EOF
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
