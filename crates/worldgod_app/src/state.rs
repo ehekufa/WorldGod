@@ -1,6 +1,8 @@
 //! Состояние приложения: мир, камера, кисть и тайминги.
 
-use worldgod_core::{Simulation, TilePos, Tool, ToolConfig, Vec2, ViewTransform, WorldSize, SIM_HZ};
+use worldgod_core::{
+    NationId, Relation, Simulation, TilePos, Tool, ToolConfig, Vec2, ViewTransform, WorldSize, SIM_HZ,
+};
 
 use crate::textures::SceneTexture;
 
@@ -63,6 +65,8 @@ pub struct AppState {
     pub texture_dirty: bool,
     /// Камера уже подстроена под реальный размер области карты.
     pub view_initialized: bool,
+    /// Первая страна, выбранная кистью «Война / Мир».
+    pub diplomacy_pick: Option<NationId>,
 
     accumulator: f64,
     last_paint_tile: Option<TilePos>,
@@ -90,6 +94,7 @@ impl AppState {
             fps: FpsMeter::default(),
             texture_dirty: true,
             view_initialized: false,
+            diplomacy_pick: None,
             accumulator: 0.0,
             last_paint_tile: None,
             last_paint_time: 0.0,
@@ -110,6 +115,7 @@ impl AppState {
         self.textures.invalidate();
         self.texture_dirty = true;
         self.view_initialized = false;
+        self.diplomacy_pick = None;
         self.tool = ToolConfig::default();
         self.view
             .set_viewport(self.view.origin, self.view.size);
@@ -141,8 +147,29 @@ impl AppState {
         self.alpha = self.accumulator.clamp(0.0, 1.0) as f32;
     }
 
+    /// Тап кистью дипломатии: первая страна запоминается, второй тап
+    /// переключает отношения пары (мир → война → союз → мир).
+    pub fn pick_nation_at(&mut self, tile: TilePos) -> Option<Relation> {
+        let nation = self.sim.nation_at(tile)?;
+        let Some(first) = self.diplomacy_pick else {
+            self.diplomacy_pick = Some(nation);
+            return None;
+        };
+        if first == nation {
+            self.diplomacy_pick = None;
+            return None;
+        }
+        self.diplomacy_pick = None;
+        self.sim.cycle_relation(first, nation)
+    }
+
     /// Применяет текущую кисть к тайлу.
     pub fn apply_tool_at(&mut self, tile: TilePos) -> u32 {
+        if self.tool.tool.is_diplomacy() {
+            self.pick_nation_at(tile);
+            return 0;
+        }
+
         let changed = self.sim.apply_tool(self.tool, tile);
         if changed > 0 || self.tool.tool == Tool::Inspect {
             self.texture_dirty = true;
@@ -172,6 +199,15 @@ impl AppState {
 
     /// Строка состояния для нижней панели.
     pub fn status_line(&self) -> String {
+        if self.tool.tool.is_diplomacy() {
+            return match self.diplomacy_pick {
+                Some(nation) => format!(
+                    "{} выбрана · тапните по второй стране",
+                    self.sim.nation_name(Some(nation))
+                ),
+                None => "Война / Мир: тапните по первой стране".to_string(),
+            };
+        }
         if self.tool.tool.is_terrain() {
             format!("{} · радиус {}", self.tool.tool.label_ru(), self.tool.clamped_radius())
         } else {
@@ -237,6 +273,28 @@ mod tests {
         assert_eq!(state.sim.tick, 0);
         assert_eq!(state.sim.size(), (WorldSize::SMALL.width, WorldSize::SMALL.height));
         assert!(state.textures.id().is_none());
+    }
+
+    #[test]
+    fn diplomacy_brush_cycles_between_two_nations() {
+        let mut state = AppState::new(WorldSize::SMALL, 11);
+        let a = state.sim.found_nation_at(TilePos::new(60, 60));
+        let b = state.sim.found_nation_at(TilePos::new(70, 70));
+        state.tool.tool = Tool::Diplomacy;
+
+        // Первый тап только запоминает страну.
+        assert_eq!(state.pick_nation_at(TilePos::new(60, 60)), None);
+        assert_eq!(state.diplomacy_pick, Some(a));
+        // Второй тап по другой стране — сразу война.
+        assert_eq!(state.pick_nation_at(TilePos::new(70, 70)), Some(Relation::War));
+        assert!(state.sim.at_war(a, b));
+        assert_eq!(state.sim.stats.wars, 1);
+
+        // Ещё раз — союз против монстров.
+        state.pick_nation_at(TilePos::new(60, 60));
+        assert_eq!(state.pick_nation_at(TilePos::new(70, 70)), Some(Relation::Alliance));
+        assert!(state.sim.allied(a, b));
+        assert_eq!(state.sim.stats.alliances, 1);
     }
 
     #[test]

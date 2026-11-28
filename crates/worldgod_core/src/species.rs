@@ -14,16 +14,19 @@ pub enum Species {
     Wolf = 3,
     /// Зомби: убивает людей и превращает их в зомби.
     Zombie = 4,
+    /// Лодка: плавает по воде, принадлежит стране, её можно разломать.
+    Boat = 5,
 }
 
 impl Species {
     /// Все виды.
-    pub const ALL: [Species; 5] = [
+    pub const ALL: [Species; 6] = [
         Self::Human,
         Self::Soldier,
         Self::Deer,
         Self::Wolf,
         Self::Zombie,
+        Self::Boat,
     ];
 
     /// Характеристики вида.
@@ -39,6 +42,7 @@ impl Species {
             Self::Deer => "Олень",
             Self::Wolf => "Волк",
             Self::Zombie => "Зомби",
+            Self::Boat => "Лодка",
         }
     }
 
@@ -50,6 +54,7 @@ impl Species {
             Self::Deer => "оленя",
             Self::Wolf => "волка",
             Self::Zombie => "зомби",
+            Self::Boat => "лодки",
         }
     }
 
@@ -61,6 +66,16 @@ impl Species {
     /// Монстры — враги людей.
     pub fn is_monster(self) -> bool {
         matches!(self, Self::Wolf | Self::Zombie)
+    }
+
+    /// Лодка — транспорт страны, а не живое существо.
+    pub fn is_boat(self) -> bool {
+        self == Self::Boat
+    }
+
+    /// Передвигается по воде, а не по суше.
+    pub fn is_water_unit(self) -> bool {
+        self == Self::Boat
     }
 
     /// Животное, которое просто живёт своей жизнью.
@@ -84,8 +99,16 @@ impl Species {
     }
 
     /// Враждебны ли два вида друг другу.
+    ///
+    /// Это «видовая» вражда: монстры против людей и волки против оленей.
+    /// Вражду между странами решает дипломатия (см.
+    /// [`crate::sim::Simulation::hostile`]).
     pub fn hostile_to(self, other: Species) -> bool {
         if self == other {
+            return false;
+        }
+        // Лодку бьют не «по виду», а по стране — этим занимается симуляция.
+        if self.is_boat() || other.is_boat() {
             return false;
         }
         if self.is_monster() && other.is_humanoid() {
@@ -127,7 +150,7 @@ pub struct Stats {
 }
 
 /// Таблица характеристик, индексированная значением [`Species`].
-pub static STATS: [Stats; 5] = [
+pub static STATS: [Stats; 6] = [
     // Человек: слабый, но упорный строитель.
     Stats {
         max_hp: 100,
@@ -198,6 +221,20 @@ pub static STATS: [Stats; 5] = [
         wood_for_nation: 0,
         wood_for_house: 0,
     },
+    // Лодка: плавучее имущество страны, сама не дерётся.
+    Stats {
+        max_hp: 150,
+        damage: 0,
+        attack_range: 0.0,
+        attack_cooldown: 60,
+        move_interval: 6,
+        aggro_radius: 0,
+        flee_radius: 0,
+        max_age: 500_000,
+        hunger_rate: 0,
+        wood_for_nation: 0,
+        wood_for_house: 0,
+    },
 ];
 
 #[cfg(test)]
@@ -241,6 +278,10 @@ mod tests {
         assert!(Species::Wolf.is_monster());
         assert!(Species::Zombie.is_monster());
         assert!(Species::Deer.is_animal());
+        assert!(Species::Boat.is_boat());
+        assert!(Species::Boat.is_water_unit());
+        assert!(!Species::Human.is_water_unit());
+        assert!(!Species::Boat.hostile_to(Species::Human));
         assert!(Species::Human.can_found_nation());
         assert!(!Species::Soldier.can_found_nation());
     }

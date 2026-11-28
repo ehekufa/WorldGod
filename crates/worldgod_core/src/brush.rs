@@ -35,11 +35,13 @@ pub enum Tool {
     Zombie,
     /// Рассмотреть существо или тайл.
     Inspect,
+    /// Дипломатия: тапнуть по двум странам — объявить войну или союз.
+    Diplomacy,
 }
 
 impl Tool {
     /// Все инструменты в порядке панели.
-    pub const ALL: [Tool; 11] = [
+    pub const ALL: [Tool; 12] = [
         Self::Raise,
         Self::Lower,
         Self::Forest,
@@ -51,6 +53,7 @@ impl Tool {
         Self::Wolf,
         Self::Zombie,
         Self::Inspect,
+        Self::Diplomacy,
     ];
 
     /// Кисти рельефа.
@@ -85,6 +88,7 @@ impl Tool {
             Self::Wolf => "Волки",
             Self::Zombie => "Зомби",
             Self::Inspect => "Осмотр",
+            Self::Diplomacy => "Война / Мир",
         }
     }
 
@@ -102,6 +106,7 @@ impl Tool {
             Self::Wolf => "Волк охотится на людей",
             Self::Zombie => "Зомби заражает убитых",
             Self::Inspect => "Тапните по существу",
+            Self::Diplomacy => "Тапните по двум странам: война → союз → мир",
         }
     }
 
@@ -119,7 +124,13 @@ impl Tool {
             Self::Wolf => [150, 156, 168],
             Self::Zombie => [146, 190, 120],
             Self::Inspect => [200, 200, 200],
+            Self::Diplomacy => [224, 120, 96],
         }
+    }
+
+    /// Инструмент дипломатии (работает не с рельефом, а со странами).
+    pub fn is_diplomacy(self) -> bool {
+        self == Self::Diplomacy
     }
 
     /// Это кисть рельефа?

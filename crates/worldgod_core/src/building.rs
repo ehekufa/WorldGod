@@ -1,4 +1,4 @@
-//! Постройки: костры-столицы, дома и руины.
+//! Постройки: костры-столицы, дома, порты и руины.
 
 use crate::grid::TilePos;
 use crate::nation::NationId;
@@ -16,11 +16,13 @@ pub enum BuildingKind {
     House = 1,
     /// Руины: дом был разрушен.
     Ruin = 2,
+    /// Порт: от него страна спускает на воду лодки.
+    Port = 3,
 }
 
 impl BuildingKind {
     /// Все виды.
-    pub const ALL: [BuildingKind; 3] = [Self::Campfire, Self::House, Self::Ruin];
+    pub const ALL: [BuildingKind; 4] = [Self::Campfire, Self::House, Self::Ruin, Self::Port];
 
     /// Название для интерфейса.
     pub fn name_ru(self) -> &'static str {
@@ -28,6 +30,7 @@ impl BuildingKind {
             Self::Campfire => "Костёр",
             Self::House => "Дом",
             Self::Ruin => "Руины",
+            Self::Port => "Порт",
         }
     }
 
@@ -42,7 +45,28 @@ impl BuildingKind {
             Self::Campfire => 1,
             Self::House => 40,
             Self::Ruin => 1,
+            Self::Port => 60,
         }
+    }
+
+    /// Сколько здоровья у постройки.
+    pub fn max_hp(self) -> i32 {
+        match self {
+            Self::Campfire => 160,
+            Self::House => 90,
+            Self::Ruin => 0,
+            Self::Port => 130,
+        }
+    }
+
+    /// Можно ли сломать постройку в бою.
+    pub fn can_be_destroyed(self) -> bool {
+        matches!(self, Self::House | Self::Port | Self::Campfire)
+    }
+
+    /// Ставится ли порт только у воды (на берегу).
+    pub fn needs_shore(self) -> bool {
+        self == Self::Port
     }
 
     /// Даёт ли жильё.
@@ -56,6 +80,15 @@ impl BuildingKind {
     /// Нужен ли для неё фундамент из готовых построек.
     pub fn is_permanent(self) -> bool {
         self != Self::Ruin
+    }
+
+    /// Радиус территории, которую держит постройка.
+    pub fn territory_radius(self) -> i32 {
+        match self {
+            Self::Campfire => 9,
+            Self::House | Self::Port => 4,
+            Self::Ruin => 0,
+        }
     }
 }
 
@@ -78,6 +111,10 @@ pub struct Building {
     pub variant: u8,
     /// Тик постройки.
     pub built_tick: Option<u64>,
+    /// Текущее здоровье: враги могут разломать дом.
+    pub hp: i32,
+    /// Максимальное здоровье.
+    pub max_hp: i32,
 }
 
 impl Building {
@@ -93,6 +130,8 @@ impl Building {
             // Вариант задаёт мелкие отличия в спрайте (окно, труба, флаг).
             variant: (id % 4) as u8,
             built_tick: None,
+            hp: kind.max_hp(),
+            max_hp: kind.max_hp(),
         }
     }
 
@@ -129,6 +168,37 @@ impl Building {
         }
     }
 
+    /// Доля здоровья 0.0..=1.0 (для полоски и руин).
+    pub fn health_fraction(&self) -> f32 {
+        if self.max_hp <= 0 {
+            return 0.0;
+        }
+        (self.hp as f32 / self.max_hp as f32).clamp(0.0, 1.0)
+    }
+
+    /// Разрушена?
+    pub fn is_destroyed(&self) -> bool {
+        self.hp <= 0 || self.kind == BuildingKind::Ruin
+    }
+
+    /// Наносит урон. Возвращает `true`, если постройка только что разрушилась.
+    pub fn damage(&mut self, amount: i32) -> bool {
+        if !self.kind.can_be_destroyed() || self.hp <= 0 {
+            return false;
+        }
+        self.hp -= amount.max(1);
+        self.hp <= 0
+    }
+
+    /// Превращает постройку в руины: дом больше не держит территорию.
+    pub fn collapse(&mut self) {
+        self.kind = BuildingKind::Ruin;
+        self.hp = 0;
+        self.max_hp = 0;
+        self.progress = self.work_required;
+        self.built_tick = None;
+    }
+
     /// Добавляет работу. Возвращает `true`, если постройка только что завершилась.
     pub fn add_work(&mut self, amount: u16, tick: u64) -> bool {
         if self.is_complete() {
@@ -162,6 +232,25 @@ mod tests {
         assert_eq!(house.built_tick, Some(2));
         // Повторная работа ничего не делает.
         assert!(!house.add_work(5, 3));
+    }
+
+    #[test]
+    fn house_can_be_destroyed() {
+        let mut house = Building::finished(7, BuildingKind::House, pos(4, 4), Some(2), 10);
+        let max_hp = house.max_hp;
+        assert!(max_hp > 0);
+        assert!(!house.is_destroyed());
+        assert!(!house.damage(max_hp / 2));
+        assert!((house.health_fraction() - 0.5).abs() < 0.6);
+        assert!(house.damage(max_hp));
+        assert!(house.is_destroyed());
+
+        house.collapse();
+        assert_eq!(house.kind, BuildingKind::Ruin);
+        assert_eq!(house.hp, 0);
+        assert!(!BuildingKind::Ruin.can_be_destroyed());
+        assert!(!BuildingKind::Ruin.is_permanent());
+        assert_eq!(BuildingKind::Port.name_ru(), "Порт");
     }
 
     #[test]

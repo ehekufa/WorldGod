@@ -3,6 +3,9 @@
 //! Решения принимаются не каждый тик, а раз в несколько тиков
 //! ([`THINK_INTERVAL`]), со сдвигом по фазе для каждого существа — так
 //! симуляция не тратит силы впустую и не «дёргается».
+//!
+//! Вражда считается не только по видам, но и по дипломатии: страны могут
+//! воевать друг с другом и заключать союз против монстров.
 
 use crate::entity::{Entity, EntityView, Intent};
 use crate::grid::TilePos;
@@ -11,6 +14,12 @@ use crate::species::Species;
 
 /// Базовый интервал между решениями (в тиках).
 pub const THINK_INTERVAL: u16 = 6;
+
+/// Радиус, в котором воин слышит союзника, которого надо защитить.
+pub const ALLY_DEFENCE_RADIUS: i32 = 14;
+
+/// Радиус, в котором воин ищет вражескую постройку для похода.
+pub const RAID_RADIUS: i32 = 40;
 
 /// Прогоняет размышления всех существ.
 pub fn think_all(sim: &mut Simulation) {
@@ -31,6 +40,7 @@ pub fn think_all(sim: &mut Simulation) {
             Species::Human | Species::Soldier => think_humanoid(sim, index),
             Species::Wolf | Species::Zombie => think_predator(sim, index),
             Species::Deer => think_prey(sim, index),
+            Species::Boat => think_boat(sim, index),
         }
     }
 }
@@ -40,18 +50,37 @@ fn think_humanoid(sim: &mut Simulation, index: usize) {
     let stats = me.species.stats();
     let danger_radius = stats.flee_radius.max(stats.aggro_radius);
 
-    // 1. Опасность рядом?
-    if danger_radius > 0 {
-        if let Some(threat) = sim.nearest_enemy(me.pos, danger_radius, me.species) {
-            let threat_pos = sim.entity(threat).map_or(me.pos, |entity| entity.pos);
+    if me.species == Species::Soldier {
+        // 1. Враг рядом: монстр или житель страны, с которой идёт война.
+        if let Some(enemy) = sim.nearest_hostile_view(&me, stats.aggro_radius) {
+            sim.entities[index].assign(Intent::Attack { target: enemy });
+            return;
+        }
 
-            if me.species == Species::Soldier {
+        // 2. Союз в действии: монстр терзает жителей страны-союзника.
+        if let Some(monster) = sim.nearest_threat_to_allies(&me, ALLY_DEFENCE_RADIUS) {
+            sim.entities[index].assign(Intent::Attack { target: monster });
+            return;
+        }
+
+        think_soldier(sim, index, me);
+        return;
+    }
+
+    // Мирный житель: сначала спасаем себя.
+    if danger_radius > 0 {
+        if let Some(threat) = sim.nearest_hostile_view(&me, danger_radius) {
+            let is_boat = sim
+                .entity(threat)
+                .is_some_and(|entity| entity.species.is_boat());
+            if is_boat {
+                // Чужую лодку у берега можно разломать: она не кусается.
                 sim.entities[index].assign(Intent::Attack { target: threat });
                 return;
             }
 
-            // Мирный житель бежит, если рядом нет защитника.
-            let defenders = sim.count_soldiers_near(me.pos, 5, me.nation);
+            let threat_pos = sim.entity(threat).map_or(me.pos, |entity| entity.pos);
+            let defenders = sim.count_allied_soldiers_near(me.pos, 5, me.nation);
             if defenders == 0 || me.pos.chebyshev(threat_pos) <= 2 {
                 sim.entities[index].assign(Intent::Flee { from: threat_pos });
                 return;
@@ -59,18 +88,20 @@ fn think_humanoid(sim: &mut Simulation, index: usize) {
         }
     }
 
-    if me.species == Species::Soldier {
-        think_soldier(sim, index, me);
-    } else {
-        think_civilian(sim, index, me);
-    }
+    think_civilian(sim, index, me);
 }
 
+/// Воин: патруль у столицы и походы на вражескую землю.
 fn think_soldier(sim: &mut Simulation, index: usize, me: EntityView) {
-    if let Some(enemy) = sim.nearest_enemy(me.pos, me.species.stats().aggro_radius, me.species) {
-        sim.entities[index].assign(Intent::Attack { target: enemy });
+    // 3. Война: рядом врага нет — идём ломать вражеские дома и костры.
+    if let Some(building) = sim
+        .nearest_enemy_building(me.pos, RAID_RADIUS, me.nation)
+        .or_else(|| sim.nearest_enemy_building(me.pos, i32::MAX / 4, me.nation))
+    {
+        sim.entities[index].assign(Intent::AttackBuilding { building });
         return;
     }
+
     let center = me
         .nation
         .and_then(|nation| sim.nation(nation))
@@ -81,7 +112,7 @@ fn think_soldier(sim: &mut Simulation, index: usize, me: EntityView) {
 fn think_civilian(sim: &mut Simulation, index: usize, me: EntityView) {
     let stats = me.species.stats();
 
-    // 2. Голод — идём собирать еду.
+    // 1. Голод — идём собирать еду.
     if me.hunger >= Entity::HUNGRY {
         if let Some(forest) = sim.nearest_forest(me.pos, 26) {
             sim.entities[index].assign(Intent::Forage { tile: forest });
@@ -90,7 +121,7 @@ fn think_civilian(sim: &mut Simulation, index: usize, me: EntityView) {
     }
 
     let Some(nation) = me.nation else {
-        // 3. Без страны: присоединиться к соседней или основать свою.
+        // 2. Без страны: присоединиться к соседней или основать свою.
         if let Some((nation_id, _)) = sim.nearest_nation_center(me.pos, 10) {
             sim.entities[index].nation = Some(nation_id);
             if let Some(nation) = sim.nation_mut(nation_id) {
@@ -110,13 +141,13 @@ fn think_civilian(sim: &mut Simulation, index: usize, me: EntityView) {
         return;
     };
 
-    // 4. Страна есть: помогаем со стройкой.
+    // 3. Страна есть: помогаем со стройкой (в том числе с портом).
     if let Some(site) = sim.nation_site(nation) {
         sim.entities[index].assign(Intent::Work { building: site });
         return;
     }
 
-    // 5. Хватает дерева и есть потребность в жилье — закладываем дом.
+    // 4. Хватает дерева и есть потребность в жилье — закладываем дом.
     if me.wood >= stats.wood_for_house {
         let (houses, population) = sim
             .nation(nation)
@@ -130,7 +161,7 @@ fn think_civilian(sim: &mut Simulation, index: usize, me: EntityView) {
         }
     }
 
-    // 6. Заготавливаем дерево.
+    // 5. Заготавливаем дерево.
     if me.wood < 9 {
         if let Some(forest) = sim.nearest_forest(me.pos, 26) {
             sim.entities[index].assign(Intent::Chop { tile: forest });
@@ -138,16 +169,14 @@ fn think_civilian(sim: &mut Simulation, index: usize, me: EntityView) {
         }
     }
 
-    // 7. Нечего делать — гуляем вокруг столицы.
-    let center = sim
-        .nation(nation)
-        .map_or(me.pos, |nation| nation.capital);
+    // 6. Нечего делать — гуляем вокруг столицы.
+    let center = sim.nation(nation).map_or(me.pos, |nation| nation.capital);
     wander_around(sim, index, me.pos, center, 8);
 }
 
 fn think_predator(sim: &mut Simulation, index: usize) {
     let me = sim.entities[index].view();
-    if let Some(prey) = sim.nearest_enemy(me.pos, me.species.stats().aggro_radius, me.species) {
+    if let Some(prey) = sim.nearest_hostile_view(&me, me.species.stats().aggro_radius) {
         sim.entities[index].assign(Intent::Attack { target: prey });
         return;
     }
@@ -157,7 +186,7 @@ fn think_predator(sim: &mut Simulation, index: usize) {
 fn think_prey(sim: &mut Simulation, index: usize) {
     let me = sim.entities[index].view();
     let flee_radius = me.species.stats().flee_radius;
-    if let Some(threat) = sim.nearest_enemy(me.pos, flee_radius, me.species) {
+    if let Some(threat) = sim.nearest_hostile_view(&me, flee_radius) {
         if let Some(entity) = sim.entity(threat) {
             let from = entity.pos;
             sim.entities[index].assign(Intent::Flee { from });
@@ -165,6 +194,21 @@ fn think_prey(sim: &mut Simulation, index: usize) {
         }
     }
     wander(sim, index, me.pos, 7);
+}
+
+/// Лодка дрейфует у берега: цель — случайная вода неподалёку.
+fn think_boat(sim: &mut Simulation, index: usize) {
+    let me = sim.entities[index].view();
+    if let Intent::Wander { goal } = sim.entities[index].intent {
+        if me.pos.chebyshev(goal) > 1 {
+            return; // ещё плывём
+        }
+    }
+    if let Some(goal) = sim.random_water_near(me.pos, 6) {
+        sim.entities[index].assign(Intent::Wander { goal });
+    } else {
+        sim.entities[index].assign(Intent::Idle);
+    }
 }
 
 /// Гуляет вокруг текущей точки.
@@ -204,9 +248,11 @@ fn wander_around(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::brush::ToolConfig;
     use crate::brush::Tool;
+    use crate::brush::ToolConfig;
+    use crate::building::BuildingKind;
     use crate::grid::pos;
+    use crate::nation::Relation;
     use crate::sim::WorldSize;
 
     /// Готовит остров с лесом и людьми.
@@ -242,7 +288,7 @@ mod tests {
         assert!(
             sim.buildings
                 .iter()
-                .any(|building| building.kind == crate::building::BuildingKind::Campfire),
+                .any(|building| building.kind == BuildingKind::Campfire),
             "должен появиться костёр-столица"
         );
     }
@@ -285,9 +331,12 @@ mod tests {
         let deer = sim.spawn(Species::Deer, spot).expect("олень");
         sim.spawn(Species::Wolf, spot.offset(3, 0)).expect("волк");
         sim.run(30);
-        let fleeing = sim
-            .entity(deer)
-            .is_some_and(|entity| matches!(entity.intent, Intent::Flee { .. } | Intent::Wander { .. }));
+        let fleeing = sim.entity(deer).is_some_and(|entity| {
+            matches!(
+                entity.intent,
+                Intent::Flee { .. } | Intent::Wander { .. }
+            )
+        });
         assert!(fleeing);
     }
 
@@ -310,5 +359,62 @@ mod tests {
                 sim.world.terrain(entity.pos)
             );
         }
+    }
+
+    /// На войне воин сам идёт к чужому дому, если рядом нет живых врагов.
+    #[test]
+    fn soldier_marches_to_enemy_house() {
+        let mut sim = island_world(404);
+        let a = sim.found_nation_at(pos(58, 60));
+        let b = sim.found_nation_at(pos(70, 60));
+        let house = sim.finish_house_for(b, pos(68, 60));
+        sim.set_relation(a, b, Relation::War);
+
+        let soldier = sim.spawn_in_nation(Species::Soldier, pos(60, 60), a).expect("воин");
+        sim.run(120);
+        let marching = sim.entity(soldier).is_some_and(|entity| {
+            matches!(entity.intent, Intent::AttackBuilding { .. })
+        });
+        assert!(marching, "воин должен взять курс на вражескую постройку");
+        let _ = house;
+    }
+
+    /// Союз: воин одной страны бежит защищать жителя другой от зомби.
+    #[test]
+    fn allies_defend_each_other_from_monsters() {
+        let mut sim = island_world(505);
+        let a = sim.found_nation_at(pos(58, 58));
+        let b = sim.found_nation_at(pos(66, 66));
+        sim.set_relation(a, b, Relation::Alliance);
+
+        // Зомби далеко (10 тайлов) от воина — сам он его не заметит,
+        // но житель союзника стоит рядом с монстром.
+        let civilian = sim.spawn_in_nation(Species::Human, pos(60, 70), b).expect("житель");
+        let zombie = sim.spawn(Species::Zombie, pos(62, 70)).expect("зомби");
+        let soldier = sim.spawn_in_nation(Species::Soldier, pos(70, 60), a).expect("воин");
+
+        sim.run(40);
+        let guarding = sim.entity(soldier).is_some_and(|entity| {
+            matches!(entity.intent, Intent::Attack { target } if target == zombie)
+        });
+        assert!(guarding, "воин-союзник должен атаковать монстра у чужого жителя");
+        let _ = civilian;
+    }
+
+    /// Лодка плавает по воде и не вылезает на сушу.
+    #[test]
+    fn boats_stay_on_water() {
+        let mut sim = island_world(606);
+        let nation = sim.found_nation_at(pos(64, 64));
+        let boat = sim.spawn_boat(pos(64, 64), nation).expect("лодка");
+        sim.run(200);
+        let boat = sim.entity(boat).expect("лодка жива");
+        assert!(boat.species.is_boat());
+        assert!(
+            sim.world.is_water(boat.pos),
+            "лодка оказалась на суше: {:?}",
+            boat.pos
+        );
+        assert!(sim.stats.boats >= 1);
     }
 }

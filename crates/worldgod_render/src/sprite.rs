@@ -94,6 +94,8 @@ const ZOMBIE: [&str; 4] = [".o.", "###", ".#.", "#.#"];
 const HOUSE: [&str; 5] = [".rrr.", "rrrrr", "wwwww", "wwdww", "wwwww"];
 const CAMPFIRE: [&str; 4] = [".f..", "f#f.", ".#w#", "wwww"];
 const RUIN: [&str; 3] = ["#.#.", ".###", "#.##"];
+const BOAT: [&str; 4] = ["..s..", "..s..", "hhshh", ".hhh."];
+const PORT: [&str; 4] = ["..p..", "..p..", "wwwww", "dwwwd"];
 
 /// Рисует существо, стоящее на тайле.
 ///
@@ -124,6 +126,7 @@ pub fn draw_entity(
         Species::Deer => &DEER[..],
         Species::Wolf => &WOLF[..],
         Species::Zombie => &ZOMBIE[..],
+        Species::Boat => &BOAT[..],
     };
 
     let (art_w, art_h) = art_size(rows);
@@ -149,6 +152,12 @@ pub fn draw_entity(
             _ => palette::SKIN,
         }),
         's' => Some(palette::STEEL),
+        'h' => Some(if variant % 2 == 0 {
+            palette::HULL
+        } else {
+            palette::HULL_DARK
+        }),
+        'p' => Some(palette::WOOD_DARK),
         '#' => match species {
             Species::Wolf => Some(if variant % 2 == 0 {
                 palette::WOLF
@@ -191,6 +200,7 @@ pub fn draw_building(
         BuildingKind::House => &HOUSE[..],
         BuildingKind::Campfire => &CAMPFIRE[..],
         BuildingKind::Ruin => &RUIN[..],
+        BuildingKind::Port => &PORT[..],
     };
     let (art_w, art_h) = art_size(rows);
     let origin_x = center_x - art_w * scale / 2;
@@ -241,6 +251,18 @@ pub fn draw_building(
                 '#' => Some(palette::STONE),
                 _ => None,
             });
+        }
+        BuildingKind::Port => {
+            if completion >= 1.0 {
+                painter.art(rows, |symbol| match symbol {
+                    'w' => Some(palette::WOOD),
+                    'd' => Some(palette::WOOD_DARK),
+                    'p' => Some(nation_color),
+                    _ => None,
+                });
+            } else {
+                draw_site(&mut painter, rows, completion, nation_color);
+            }
         }
     }
 }

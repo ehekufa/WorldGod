@@ -7,11 +7,11 @@ use crate::ai;
 use crate::brush::{self, Tool, ToolConfig};
 use crate::building::{Building, BuildingId, BuildingKind};
 use crate::combat;
-use crate::entity::{Entity, EntityId, Intent};
+use crate::entity::{Entity, EntityId, EntityView, Intent};
 use crate::events::{EventKind, EventLog};
 use crate::grid::{for_each_in_radius, TilePos};
 use crate::names;
-use crate::nation::{Nation, NationId, NATION_PALETTE};
+use crate::nation::{Diplomacy, Nation, NationId, Relation, NATION_PALETTE};
 use crate::pathfind::{greedy_step, PathFinder};
 use crate::rng::Rng;
 use crate::species::Species;
@@ -153,6 +153,14 @@ pub struct Stats {
     pub campfires: u32,
     /// Руины.
     pub ruins: u32,
+    /// Порты.
+    pub ports: u32,
+    /// Лодки.
+    pub boats: u32,
+    /// Идущие войны.
+    pub wars: u32,
+    /// Действующие союзы.
+    pub alliances: u32,
     /// Стран.
     pub nations: u32,
     /// Доля суши 0.0..=1.0.
@@ -210,6 +218,8 @@ pub struct Simulation {
     pub selected: Option<EntityId>,
     /// Итоги партии.
     pub totals: Totals,
+    /// Отношения между странами: мир, союз или война.
+    pub diplomacy: Diplomacy,
 
     /// Владелец каждого тайла (0 — ничей, иначе id страны).
     territory: Vec<u8>,
@@ -248,6 +258,7 @@ impl Simulation {
             stats: Stats::default(),
             selected: None,
             totals: Totals::default(),
+            diplomacy: Diplomacy::new(),
             territory: vec![0; cells],
             territory_dirty: true,
             blocked: vec![false; cells],
@@ -337,6 +348,336 @@ impl Simulation {
             .map_or("Без страны", |nation| nation.name.as_str())
     }
 
+    // ------------------------------------------------------------ дипломатия
+
+    /// Отношения двух стран.
+    pub fn relation(&self, a: NationId, b: NationId) -> Relation {
+        self.diplomacy.get(a, b)
+    }
+
+    /// Между странами война?
+    pub fn at_war(&self, a: NationId, b: NationId) -> bool {
+        self.diplomacy.at_war(a, b)
+    }
+
+    /// Страны в союзе?
+    pub fn allied(&self, a: NationId, b: NationId) -> bool {
+        self.diplomacy.allied(a, b)
+    }
+
+    /// Воюют ли две страны (у существа без страны врагов нет).
+    pub fn nations_at_war(&self, a: Option<NationId>, b: Option<NationId>) -> bool {
+        match (a, b) {
+            (Some(a), Some(b)) => a != b && self.diplomacy.at_war(a, b),
+            _ => false,
+        }
+    }
+
+    /// Страны в союзе?
+    pub fn nations_allied(&self, a: Option<NationId>, b: Option<NationId>) -> bool {
+        match (a, b) {
+            (Some(a), Some(b)) => a != b && self.diplomacy.allied(a, b),
+            _ => false,
+        }
+    }
+
+    /// Меняет отношения двух стран и пишет об этом в ленту событий.
+    ///
+    /// Возвращает новый статус или `None`, если такой страны нет.
+    pub fn set_relation(
+        &mut self,
+        a: NationId,
+        b: NationId,
+        relation: Relation,
+    ) -> Option<Relation> {
+        if a == b || self.nation(a).is_none() || self.nation(b).is_none() {
+            return None;
+        }
+        self.diplomacy.ensure(self.nations.len());
+        if self.diplomacy.get(a, b) == relation {
+            return Some(relation);
+        }
+        self.diplomacy.set(a, b, relation);
+
+        let name_a = self.nation_name(Some(a)).to_string();
+        let name_b = self.nation_name(Some(b)).to_string();
+        let text = match relation {
+            Relation::War => format!("{name_a} объявила войну {name_b}"),
+            Relation::Alliance => format!("{name_a} и {name_b} заключили союз против монстров"),
+            Relation::Peace => format!("{name_a} и {name_b} заключили мир"),
+        };
+        self.events.push(self.tick, EventKind::Nation, text);
+        self.refresh_stats();
+        Some(relation)
+    }
+
+    /// Переключает статус пары по кругу: мир → война → союз → мир.
+    pub fn cycle_relation(&mut self, a: NationId, b: NationId) -> Option<Relation> {
+        let next = self.relation(a, b).next();
+        self.set_relation(a, b, next)
+    }
+
+    /// Страна, которой принадлежит тайл (для кисти «Война / Мир»).
+    ///
+    /// Сначала смотрим карту владений, а если она ещё не пересчитана —
+    /// ближайшую постройку.
+    pub fn nation_at(&self, pos: TilePos) -> Option<NationId> {
+        if let Some(owner) = self.territory_owner(pos) {
+            return Some(owner);
+        }
+        self.buildings
+            .iter()
+            .filter(|building| {
+                building.nation.is_some()
+                    && building.kind.is_permanent()
+                    && building.pos.chebyshev(pos) <= 4
+            })
+            .min_by_key(|building| building.pos.chebyshev(pos))
+            .and_then(|building| building.nation)
+    }
+
+    // ------------------------------------------------------------ вражда
+
+    /// Враждебны ли два существа с учётом дипломатии.
+    ///
+    /// Монстры враждуют с людьми всегда, люди двух стран — только на войне,
+    /// а лодку может разломать любой чужой житель воюющей страны.
+    pub fn hostile_views(&self, attacker: &EntityView, target: &EntityView) -> bool {
+        if attacker.id == target.id {
+            return false;
+        }
+        let a = attacker.species;
+        let b = target.species;
+
+        if a.is_boat() || b.is_boat() {
+            let (boat, other) = if a.is_boat() {
+                (attacker, target)
+            } else {
+                (target, attacker)
+            };
+            if !other.species.is_humanoid() {
+                return false;
+            }
+            return self.nations_at_war(boat.nation, other.nation);
+        }
+
+        if a.is_monster() || b.is_monster() {
+            return a.hostile_to(b);
+        }
+
+        if a.is_humanoid() && b.is_humanoid() {
+            return self.nations_at_war(attacker.nation, target.nation);
+        }
+
+        false
+    }
+
+    /// То же самое, но для самих существ.
+    pub fn hostile(&self, attacker: &Entity, target: &Entity) -> bool {
+        self.hostile_views(&attacker.view(), &target.view())
+    }
+
+    /// Ближайший враг с учётом дипломатии.
+    pub fn nearest_hostile_view(&self, me: &EntityView, radius: i32) -> Option<EntityId> {
+        let mut best: Option<(i32, EntityId)> = None;
+        for other in &self.entities {
+            if !other.alive || other.id == me.id {
+                continue;
+            }
+            if !self.hostile_views(me, &other.view()) {
+                continue;
+            }
+            let distance = me.pos.chebyshev(other.pos);
+            if distance > radius {
+                continue;
+            }
+            if best.map_or(true, |(best_distance, _)| distance < best_distance) {
+                best = Some((distance, other.id));
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
+    /// Ближайший враг для конкретного существа.
+    pub fn nearest_hostile(&self, me: &Entity, radius: i32) -> Option<EntityId> {
+        self.nearest_hostile_view(&me.view(), radius)
+    }
+
+    /// Монстр, который угрожает жителям страны-союзника рядом с нами.
+    ///
+    /// Так работают союзы: воины одной страны приходят на помощь другой.
+    pub fn nearest_threat_to_allies(&self, me: &EntityView, radius: i32) -> Option<EntityId> {
+        let Some(my_nation) = me.nation else {
+            return None;
+        };
+        let mut best: Option<(i32, EntityId)> = None;
+        for ally in &self.entities {
+            if !ally.alive || !ally.species.is_humanoid() {
+                continue;
+            }
+            let Some(ally_nation) = ally.nation else {
+                continue;
+            };
+            if ally_nation == my_nation || !self.diplomacy.allied(my_nation, ally_nation) {
+                continue;
+            }
+            if me.pos.chebyshev(ally.pos) > radius {
+                continue;
+            }
+            for monster in &self.entities {
+                if !monster.alive || !monster.species.is_monster() {
+                    continue;
+                }
+                if ally.pos.chebyshev(monster.pos) > 6 {
+                    continue;
+                }
+                let distance = me.pos.chebyshev(monster.pos);
+                if best.map_or(true, |(best_distance, _)| distance < best_distance) {
+                    best = Some((distance, monster.id));
+                }
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
+    /// Ближайшая постройка страны, с которой мы воюем.
+    pub fn nearest_enemy_building(
+        &self,
+        pos: TilePos,
+        radius: i32,
+        me: Option<NationId>,
+    ) -> Option<BuildingId> {
+        let me = me?;
+        let mut best: Option<(i32, BuildingId)> = None;
+        for building in &self.buildings {
+            let Some(owner) = building.nation else {
+                continue;
+            };
+            if owner == me || !self.diplomacy.at_war(me, owner) {
+                continue;
+            }
+            if !building.is_complete() || !building.kind.is_permanent() {
+                continue;
+            }
+            let distance = pos.chebyshev(building.pos);
+            if distance > radius {
+                continue;
+            }
+            if best.map_or(true, |(best_distance, _)| distance < best_distance) {
+                best = Some((distance, building.id));
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
+    /// Есть ли у страны хоть один противник.
+    pub fn nation_at_war_with_anyone(&self, nation: NationId) -> bool {
+        self.diplomacy
+            .pairs(Relation::War)
+            .iter()
+            .any(|(a, b)| *a == nation || *b == nation)
+    }
+
+    /// Сколько воинов рядом: своих и союзных.
+    pub fn count_allied_soldiers_near(
+        &self,
+        pos: TilePos,
+        radius: i32,
+        nation: Option<NationId>,
+    ) -> u32 {
+        self.entities
+            .iter()
+            .filter(|entity| {
+                if !entity.alive || entity.species != Species::Soldier {
+                    return false;
+                }
+                if entity.nation == nation {
+                    return pos.chebyshev(entity.pos) <= radius;
+                }
+                self.nations_allied(nation, entity.nation) && pos.chebyshev(entity.pos) <= radius
+            })
+            .count() as u32
+    }
+
+    // ------------------------------------------------------------ вода и суша
+
+    /// Может ли вид стоять на этом тайле.
+    pub fn is_passable_for(&self, species: Species, pos: TilePos) -> bool {
+        if species.is_water_unit() {
+            return self.world.is_water(pos) && !self.is_blocked_tile(pos);
+        }
+        self.is_walkable(pos)
+    }
+
+    /// Путь с учётом стихии вида: лодки плывут по воде, остальные ходят по суше.
+    pub fn find_path_for(
+        &mut self,
+        species: Species,
+        from: TilePos,
+        to: TilePos,
+        budget: u32,
+    ) -> Option<Vec<TilePos>> {
+        let world = &self.world;
+        let blocked = &self.blocked;
+        let width = world.width() as usize;
+        let water = species.is_water_unit();
+        let walkable = |p: TilePos| -> bool {
+            let passable = if water {
+                world.is_water(p)
+            } else {
+                world.is_walkable(p)
+            };
+            if !passable {
+                return false;
+            }
+            let index = (p.y as usize) * width + (p.x as usize);
+            !blocked.get(index).copied().unwrap_or(false)
+        };
+        self.pathfinder.find(from, to, walkable, budget)
+    }
+
+    /// Ближайшая вода — для лодок.
+    pub fn nearest_water(&self, from: TilePos, radius: i32) -> Option<TilePos> {
+        self.world
+            .find_terrain_near(from, radius, |terrain| terrain.is_water())
+    }
+
+    /// Ставит лодку страны на воду рядом с точкой.
+    pub fn spawn_boat(&mut self, near: TilePos, nation: NationId) -> Option<EntityId> {
+        let spot = self.nearest_water(near, 10)?;
+        let id = self.push_entity(Species::Boat, spot);
+        if let Some(entity) = self.entity_mut(id) {
+            entity.nation = Some(nation);
+        }
+        self.refresh_stats();
+        Some(id)
+    }
+
+    /// Место под порт: ровная земля у самой воды рядом со столицей.
+    pub fn find_port_site(&self, nation: NationId) -> Option<TilePos> {
+        let capital = self.nation(nation).map_or(TilePos::ZERO, |nation| nation.capital);
+        let mut best: Option<(i32, TilePos)> = None;
+        for dy in -14..=14 {
+            for dx in -14..=14 {
+                let tile = capital.offset(dx, dy);
+                if !self.world.terrain(tile).is_buildable() {
+                    continue;
+                }
+                if self.building_at(tile).is_some() {
+                    continue;
+                }
+                if !tile.neighbors4().any(|near| self.world.is_water(near)) {
+                    continue;
+                }
+                let distance = capital.chebyshev(tile);
+                if best.map_or(true, |(best_distance, _)| distance < best_distance) {
+                    best = Some((distance, tile));
+                }
+            }
+        }
+        best.map(|(_, tile)| tile)
+    }
+
     /// Выбранное существо.
     pub fn selected_entity(&self) -> Option<&Entity> {
         self.selected.and_then(|id| self.entity(id))
@@ -392,6 +733,76 @@ impl Simulation {
             !blocked.get(index).copied().unwrap_or(false)
         };
         self.pathfinder.find(from, to, walkable, budget)
+    }
+
+    /// Страна по тайлу: ставит костёр и сразу регистрирует страну в мире.
+    ///
+    /// Нужно и кисти «Страна», и тестам: без сущности-основателя
+    /// [`Simulation::found_nation`] не вызовешь.
+    pub fn found_nation_at(&mut self, pos: TilePos) -> NationId {
+        let id = self.next_nation_id;
+        self.next_nation_id += 1;
+
+        let taken: Vec<String> = self.nations.iter().map(|nation| nation.name.clone()).collect();
+        let name = names::nation_name(&mut self.rng, &taken);
+        let color = NATION_PALETTE[(id as usize - 1) % NATION_PALETTE.len()];
+        self.nations
+            .push(Nation::new(id, name.clone(), color, pos, self.tick));
+
+        let building_id = self.next_building_id;
+        self.next_building_id += 1;
+        self.buildings.push(Building::finished(
+            building_id,
+            BuildingKind::Campfire,
+            pos,
+            Some(id),
+            self.tick,
+        ));
+
+        self.totals.nations_founded += 1;
+        self.blocked_dirty = true;
+        self.territory_dirty = true;
+        self.diplomacy.ensure(self.nations.len());
+        self.refresh_stats();
+        self.events.push(
+            self.tick,
+            EventKind::Nation,
+            format!("{name}: основана новая страна"),
+        );
+        id
+    }
+
+    /// Ставит готовый дом страны (для кисти и тестов).
+    pub fn finish_house_for(&mut self, nation: NationId, pos: TilePos) -> BuildingId {
+        let id = self.next_building_id;
+        self.next_building_id += 1;
+        self.buildings.push(Building::finished(
+            id,
+            BuildingKind::House,
+            pos,
+            Some(nation),
+            self.tick,
+        ));
+        self.blocked_dirty = true;
+        self.territory_dirty = true;
+        id
+    }
+
+    /// Ближайший враг для существа по его идентификатору.
+    pub fn nearest_hostile_to_id(&self, id: EntityId, radius: i32) -> Option<EntityId> {
+        let entity = self.entity(id)?;
+        self.nearest_hostile(entity, radius)
+    }
+
+    /// Случайная вода рядом с центром — для лодок.
+    pub fn random_water_near(&mut self, center: TilePos, radius: i32) -> Option<TilePos> {
+        for _ in 0..24 {
+            let candidate = self.rng.tile_in_square(center, radius);
+            if self.world.is_water(candidate) {
+                return Some(candidate);
+            }
+        }
+        self.nearest_water(center, radius.max(4))
     }
 
     /// Случайная проходимая точка рядом с центром.
@@ -497,13 +908,18 @@ impl Simulation {
             self.world.nearest_walkable(pos, 6)?
         };
 
+        Some(self.push_entity(species, spot))
+    }
+
+    /// Кладёт существо на конкретную клетку без поиска проходимого места.
+    fn push_entity(&mut self, species: Species, pos: TilePos) -> EntityId {
         let id = self.next_entity_id;
         self.next_entity_id += 1;
         let variant = (self.rng.next_u32() % 4) as u8;
-        self.entities.push(Entity::new(id, species, spot, variant));
+        self.entities.push(Entity::new(id, species, pos, variant));
         // Статистика всегда соответствует миру: интерфейс читает её как есть.
         self.refresh_stats();
-        Some(id)
+        id
     }
 
     /// Ставит существо сразу в страну.
@@ -593,16 +1009,21 @@ impl Simulation {
                 continue;
             }
             let pos = self.entities[index].pos;
-            if self.is_walkable(pos) {
+            let species = self.entities[index].species;
+            if self.is_passable_for(species, pos) {
                 continue;
             }
-            if let Some(spot) = self.world.nearest_walkable(pos, 8) {
+            let spot = if species.is_water_unit() {
+                self.nearest_water(pos, 12)
+            } else {
+                self.world.nearest_walkable(pos, 8)
+            };
+            if let Some(spot) = spot {
                 let entity = &mut self.entities[index];
                 entity.pos = spot;
                 entity.prev_pos = spot;
                 entity.path.clear();
             } else {
-                let species = self.entities[index].species;
                 self.kill(index, None);
                 self.events.push(
                     self.tick,
@@ -667,6 +1088,7 @@ impl Simulation {
             self.rebuild_territory();
         }
 
+        self.port_pass();
         self.refresh_nations();
         self.refresh_stats();
     }
@@ -686,10 +1108,16 @@ impl Simulation {
     }
 
     fn move_entity(&mut self, index: usize) {
-        let (pos, intent, move_interval, attack_range) = {
+        let (pos, intent, move_interval, attack_range, species) = {
             let entity = &self.entities[index];
             let stats = entity.stats();
-            (entity.pos, entity.intent, stats.move_interval, stats.attack_range)
+            (
+                entity.pos,
+                entity.intent,
+                stats.move_interval,
+                stats.attack_range,
+                entity.species,
+            )
         };
 
         // Куда идём.
@@ -707,6 +1135,11 @@ impl Simulation {
                 .iter()
                 .find(|entity| entity.id == target && entity.alive)
                 .map(|entity| entity.pos),
+            Intent::AttackBuilding { building } => self
+                .buildings
+                .iter()
+                .find(|target| target.id == building && !target.is_destroyed())
+                .map(|target| target.pos),
             Intent::Flee { .. } => None,
         };
 
@@ -726,6 +1159,7 @@ impl Simulation {
                 pos.chebyshev(goal) <= 1
             }
             Intent::Attack { .. } => distance_between(pos, goal) <= attack_range,
+            Intent::AttackBuilding { .. } => pos.chebyshev(goal) <= 1,
             _ => pos == goal,
         };
 
@@ -744,17 +1178,21 @@ impl Simulation {
         }
         if path.is_empty() {
             path = self
-                .find_path(pos, goal, Self::PATH_BUDGET)
+                .find_path_for(species, pos, goal, Self::PATH_BUDGET)
                 .unwrap_or_default();
         }
 
         let mut next = path.first().copied();
-        if next.is_some_and(|candidate| !self.is_walkable(candidate)) {
+        if next.is_some_and(|candidate| !self.is_passable_for(species, candidate)) {
             path.clear();
             next = None;
         }
-        let next = next.or_else(|| greedy_step(pos, goal, |candidate| self.is_walkable(candidate)));
-        let next = next.filter(|candidate| self.is_walkable(*candidate));
+        let next = next.or_else(|| {
+            greedy_step(pos, goal, |candidate| {
+                self.is_passable_for(species, candidate)
+            })
+        });
+        let next = next.filter(|candidate| self.is_passable_for(species, *candidate));
 
         if let Some(step) = next {
             if path.first().is_some_and(|first| *first == step) {
@@ -929,6 +1367,24 @@ impl Simulation {
                 BuildingKind::Campfire => {
                     self.territory_dirty = true;
                 }
+                BuildingKind::Port => {
+                    self.territory_dirty = true;
+                    let site = self
+                        .buildings
+                        .iter()
+                        .find(|building| building.id == building_id)
+                        .map(|building| building.pos)
+                        .unwrap_or(self.entities[index].pos);
+                    if let Some(nation_id) = nation {
+                        let name = self.nation_name(Some(nation_id)).to_string();
+                        self.spawn_boat(site, nation_id);
+                        self.events.push(
+                            self.tick,
+                            EventKind::Build,
+                            format!("{name}: порт готов, лодка спущена на воду"),
+                        );
+                    }
+                }
                 BuildingKind::Ruin => {}
             }
             self.entities[index].assign(Intent::Idle);
@@ -976,6 +1432,8 @@ impl Simulation {
         self.totals.nations_founded += 1;
         self.blocked_dirty = true;
         self.territory_dirty = true;
+        // Новая страна входит в мир со всеми и сразу попадает в таблицу.
+        self.diplomacy.ensure(self.nations.len());
         self.refresh_stats();
         self.events.push(
             self.tick,
@@ -1073,6 +1531,75 @@ impl Simulation {
         }
     }
 
+    /// Война требует флота: страны, у которых есть дома и враг, закладывают
+    /// порт. Готовый порт сразу спускает на воду одну лодку (см. `work_on`).
+    fn port_pass(&mut self) {
+        if self.nations.is_empty() || self.tick % 40 != 0 {
+            return;
+        }
+        let nations: Vec<NationId> = self.nations.iter().map(|nation| nation.id).collect();
+        for nation in nations {
+            let houses = self.nation(nation).map_or(0, |nation| nation.houses);
+            if houses < 2 || !self.nation_at_war_with_anyone(nation) {
+                continue;
+            }
+            let has_port = self
+                .buildings
+                .iter()
+                .any(|building| building.nation == Some(nation) && building.kind == BuildingKind::Port);
+            if has_port {
+                continue;
+            }
+            if !self.rng.chance(0.25) {
+                continue;
+            }
+            let Some(site) = self.find_port_site(nation) else {
+                continue;
+            };
+            if self.building_at(site).is_some() {
+                continue;
+            }
+            let id = self.next_building_id;
+            self.next_building_id += 1;
+            self.buildings
+                .push(Building::new(id, BuildingKind::Port, site, Some(nation)));
+            self.blocked_dirty = true;
+            self.territory_dirty = true;
+            let name = self.nation_name(Some(nation)).to_string();
+            self.events.push(
+                self.tick,
+                EventKind::Build,
+                format!("{name}: заложен порт для переправы к врагу"),
+            );
+        }
+    }
+
+    /// Наносит урон постройке. Возвращает `true`, если она только что рухнула.
+    pub fn damage_building(&mut self, index: usize, amount: i32) -> bool {
+        if index >= self.buildings.len() {
+            return false;
+        }
+        if !self.buildings[index].damage(amount) {
+            return false;
+        }
+
+        let kind = self.buildings[index].kind;
+        let nation = self.buildings[index].nation;
+        self.buildings[index].collapse();
+        self.blocked_dirty = true;
+        self.territory_dirty = true;
+
+        let owner = self.nation_name(nation).to_string();
+        let what = kind.name_ru().to_lowercase();
+        let text = if nation.is_some() {
+            format!("{owner}: {what} разрушен в бою")
+        } else {
+            format!("{what} разрушен в бою")
+        };
+        self.events.push(self.tick, EventKind::Combat, text);
+        true
+    }
+
     fn rebuild_blocked(&mut self) {
         let cells = self.world.len();
         if self.blocked.len() != cells {
@@ -1105,12 +1632,11 @@ impl Simulation {
                 if nation > u8::MAX as NationId {
                     return None;
                 }
-                let radius = if building.kind == BuildingKind::Campfire {
-                    9
-                } else {
-                    4
-                };
-                Some((building.pos, radius, nation as u8))
+                Some((
+                    building.pos,
+                    building.kind.territory_radius(),
+                    nation as u8,
+                ))
             })
             .collect();
 
@@ -1176,6 +1702,7 @@ impl Simulation {
                 Species::Deer => stats.deer += 1,
                 Species::Wolf => stats.wolves += 1,
                 Species::Zombie => stats.zombies += 1,
+                Species::Boat => stats.boats += 1,
             }
         }
         for building in &self.buildings {
@@ -1183,6 +1710,7 @@ impl Simulation {
                 BuildingKind::House if building.is_complete() => stats.houses += 1,
                 BuildingKind::Campfire => stats.campfires += 1,
                 BuildingKind::Ruin => stats.ruins += 1,
+                BuildingKind::Port if building.is_complete() => stats.ports += 1,
                 _ => {}
             }
         }
@@ -1190,6 +1718,8 @@ impl Simulation {
         stats.population = stats.humans + stats.soldiers;
         stats.monsters = stats.wolves + stats.zombies;
         stats.nations = self.nations.len() as u32;
+        stats.wars = self.diplomacy.war_count();
+        stats.alliances = self.diplomacy.alliance_count();
         stats.land_fraction = self.world.land_fraction();
         stats.land_tiles = self.world.land_tiles();
         stats.tick = self.tick;
@@ -1213,8 +1743,11 @@ impl Simulation {
 
         if let Some(nation_id) = nation {
             if let Some(nation) = self.nation_mut(nation_id) {
-                nation.remove_citizen(species == Species::Soldier);
-                nation.losses += 1;
+                // Лодка — имущество, а не житель: население не меняется.
+                if species.is_humanoid() {
+                    nation.remove_citizen(species == Species::Soldier);
+                    nation.losses += 1;
+                }
             }
         }
 

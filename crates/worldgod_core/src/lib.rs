@@ -13,7 +13,11 @@
 //! * [`Simulation`] — владелец мира, жителей, построек, стран и журнала событий.
 //!   Шаг симуляции — [`Simulation::step`], 10 тиков в секунду ([`SIM_HZ`]).
 //! * [`brush`] — инструменты игрока: поднять сушу, опустить в воду, вырастить
-//!   лес, насыпать пляж, поднять горы и заселить мир существами.
+//!   лес, насыпать пляж, поднять горы, заселить мир существами и объявить
+//!   войну или союз между странами.
+//! * [`nation`] — страны и таблица дипломатии: у каждой пары стран есть
+//!   статус «мир», «союз» или «война»; на войне воины идут на чужую землю,
+//!   а в союзе защищают жителей союзника от монстров.
 //!
 //! ## Быстрый старт
 //!
@@ -68,7 +72,7 @@ pub use entity::{Entity, EntityId, Intent};
 pub use events::{EventKind, EventLog, GameEvent};
 pub use grid::{pos, TilePos};
 pub use math::Vec2;
-pub use nation::{Nation, NationId};
+pub use nation::{Diplomacy, Nation, NationId, Relation};
 pub use rng::Rng;
 pub use sim::{Simulation, Speed, Stats, WorldSize, SIM_HZ};
 pub use species::Species;

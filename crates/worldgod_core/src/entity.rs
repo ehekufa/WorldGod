@@ -38,6 +38,11 @@ pub enum Intent {
         /// Кого бьёт.
         target: EntityId,
     },
+    /// Идёт ломать вражескую постройку (дом, костёр или порт).
+    AttackBuilding {
+        /// Какую постройку штурмует.
+        building: BuildingId,
+    },
     /// Убегает от угрозы.
     Flee {
         /// Откуда бежит.
@@ -57,7 +62,10 @@ impl Intent {
             Self::Wander { goal } => Some(goal),
             Self::Chop { tile } | Self::Forage { tile } => Some(tile),
             Self::Flee { from } => Some(from),
-            Self::Idle | Self::Work { .. } | Self::Attack { .. } => None,
+            Self::Idle
+            | Self::Work { .. }
+            | Self::Attack { .. }
+            | Self::AttackBuilding { .. } => None,
         }
     }
 
@@ -70,6 +78,7 @@ impl Intent {
             Self::Forage { .. } => "Собирает еду",
             Self::Work { .. } => "Строит",
             Self::Attack { .. } => "Сражается",
+            Self::AttackBuilding { .. } => "Штурмует постройку",
             Self::Flee { .. } => "Убегает",
         }
     }

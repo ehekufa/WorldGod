@@ -17,6 +17,15 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         widgets::stat_chip(ui, "люди", &stats.population.to_string(), theme::SUCCESS);
         widgets::stat_chip(ui, "страны", &stats.nations.to_string(), theme::ACCENT);
         widgets::stat_chip(ui, "монстры", &stats.monsters.to_string(), theme::DANGER);
+        if stats.wars > 0 {
+            widgets::stat_chip(ui, "войны", &stats.wars.to_string(), theme::DANGER);
+        }
+        if stats.alliances > 0 {
+            widgets::stat_chip(ui, "союзы", &stats.alliances.to_string(), theme::SUCCESS);
+        }
+        if stats.boats > 0 {
+            widgets::stat_chip(ui, "лодки", &stats.boats.to_string(), theme::ACCENT);
+        }
         widgets::stat_chip(
             ui,
             "суша",

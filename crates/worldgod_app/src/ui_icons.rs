@@ -22,7 +22,19 @@ pub fn tool_icon(painter: &egui::Painter, rect: Rect, tool: Tool, color: Color32
         Tool::Wolf => wolf_icon(painter, rect, color),
         Tool::Zombie => zombie_icon(painter, rect, color),
         Tool::Inspect => inspect_icon(painter, rect, color),
+        Tool::Diplomacy => diplomacy_icon(painter, rect, color),
     }
+}
+
+/// Иконка «Война / Мир»: два скрещённых флажка на древках.
+fn diplomacy_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    // Древко слева и флажок над ним.
+    stroke_path(painter, rect, &[(0.34, 0.2), (0.34, 0.82)], 1.6, color);
+    fill(painter, rect, &[(0.34, 0.24), (0.66, 0.32), (0.34, 0.44)], color);
+    // Древко справа — с флажком другого цвета (приглушённым).
+    let dim = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 150);
+    stroke_path(painter, rect, &[(0.66, 0.2), (0.66, 0.82)], 1.6, dim);
+    fill(painter, rect, &[(0.66, 0.48), (0.34, 0.56), (0.66, 0.68)], dim);
 }
 
 /// Иконка скорости времени.
