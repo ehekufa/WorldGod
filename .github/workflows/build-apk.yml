@@ -67,23 +67,52 @@ jobs:
 
       - name: Сборка APK (aarch64 + armv7 + x86_64)
         id: build
+        # Отчёт публикуется отдельным шагом ниже, поэтому сама сборка не
+        # роняет job сразу: иначе лог не успевает попасть в артефакт.
+        continue-on-error: true
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
         run: |
-          status=0
+          set +e
           cargo apk build --release \
-            --manifest-path crates/worldgod_app/Cargo.toml > build.log 2>&1 || status=$?
-          {
-            echo "**cargo apk build** (код $status)"
-            echo '```'
-            tail -c 60000 build.log
-            echo '```'
-          } > report.md
+            --manifest-path crates/worldgod_app/Cargo.toml > build.log 2>&1
+          status=$?
+          python3 - "$status" <<'EOF'
+          import re, sys
+
+          status = sys.argv[1]
+          raw = open("build.log", "rb").read()
+          # tail -c может разрезать многобайтовый символ: глушим ошибки
+          text = raw.decode("utf-8", "replace")
+          text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
+          lines = text.splitlines()[-400:]
+          body = "\n".join(lines)[-55000:]
+          report = f"**cargo apk build** (код {status})\n```\n{body}\n```\n"
+          open("report.md", "w", encoding="utf-8").write(report)
+          open("build-log.txt", "w", encoding="utf-8").write(text)
+          print(body[-8000:])
+          EOF
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
             "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
-            -F "body=@report.md" > /dev/null || true
+            -F "body=@report.md" > /dev/null || echo "отчёт не опубликован"
           exit $status
+
+      - name: Журнал сборки
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          if-no-files-found: warn
+          retention-days: 7
+          path: build-log.txt
+
+      - name: Итог сборки
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "Сборка APK не удалась — подробности в артефакте build-log и в комментарии к коммиту."
+          exit 1
 
       - name: Список собранных файлов
         run: find target -name '*.apk' -printf '%p — %s байт\n'
@@ -133,25 +162,53 @@ jobs:
       - run: cargo install cargo-apk --version "^0.10"
 
       - name: Сборка
+        id: build
+        continue-on-error: true
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
         run: |
-          status=0
+          set +e
           cargo apk build --release --target aarch64-linux-android \
-            --manifest-path crates/worldgod_app/Cargo.toml > build.log 2>&1 || status=$?
-          {
-            echo "**cargo apk build (arm64)** (код $status)"
-            echo '```'
-            tail -c 60000 build.log
-            echo '```'
-          } > report.md
+            --manifest-path crates/worldgod_app/Cargo.toml > build.log 2>&1
+          status=$?
+          python3 - "$status" <<'EOF'
+          import re, sys
+
+          status = sys.argv[1]
+          raw = open("build.log", "rb").read()
+          text = raw.decode("utf-8", "replace")
+          text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
+          lines = text.splitlines()[-400:]
+          body = "\n".join(lines)[-55000:]
+          report = f"**cargo apk build (arm64)** (код {status})\n```\n{body}\n```\n"
+          open("report.md", "w", encoding="utf-8").write(report)
+          open("build-log-arm64.txt", "w", encoding="utf-8").write(text)
+          print(body[-8000:])
+          EOF
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
             "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
-            -F "body=@report.md" > /dev/null || true
+            -F "body=@report.md" > /dev/null || echo "отчёт не опубликован"
           exit $status
 
+      - name: Журнал сборки
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-arm64
+          if-no-files-found: warn
+          retention-days: 7
+          path: build-log-arm64.txt
+
+      - name: Итог сборки
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "Сборка APK (arm64) не удалась — подробности в артефакте build-log-arm64."
+          exit 1
+
       - uses: actions/upload-artifact@v4
+        if: steps.build.outcome == 'success'
         with:
           name: worldgod-apk-arm64
           if-no-files-found: error
