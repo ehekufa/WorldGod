@@ -80,7 +80,6 @@ jobs:
         run: cargo clippy -p worldgod_core -p worldgod_render -p worldgod_preview --all-targets
 
       - name: Тесты (симуляция, рендер, превью)
-        continue-on-error: true
         run: |
           status=0
           cargo test -p worldgod_core -p worldgod_render -p worldgod_preview \
@@ -202,7 +201,6 @@ jobs:
         run: cargo clippy -p worldgod_app --all-targets
 
       - name: Тесты интерфейса
-        continue-on-error: true
         run: |
           status=0
           cargo test -p worldgod_app > test.log 2>&1 || status=$?

@@ -307,13 +307,15 @@ mod tests {
 
     #[test]
     fn human_is_drawn_above_the_tile() {
+        // Масштаб 2: при 3 пикселях на тайл спрайт занимает всего 7 пикселей
+        // и проверка «почти не нарисовался» становится слишком грубой.
         let mut frame = Frame::filled(32, 32, [0, 0, 0]);
         draw_entity(
             &mut frame,
             Species::Human,
             16,
             24,
-            3,
+            6,
             [200, 60, 60],
             0,
             false,
@@ -327,7 +329,7 @@ mod tests {
                 }
             }
         }
-        assert!(painted > 8, "спрайт почти не нарисовался: {painted}");
+        assert!(painted > 20, "спрайт почти не нарисовался: {painted}");
     }
 
     #[test]
