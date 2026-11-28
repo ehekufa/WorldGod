@@ -689,7 +689,7 @@ impl Simulation {
     /// Место под порт: ровная земля у самой воды рядом со столицей.
     pub fn find_port_site(&self, nation: NationId) -> Option<TilePos> {
         let capital = self.nation(nation).map_or(TilePos::ZERO, |nation| nation.capital);
-        let mut best: Option<(f32, TilePos)> = None;
+        let mut best: Option<(i32, TilePos)> = None;
         for dy in -14..=14 {
             for dx in -14..=14 {
                 let tile = capital.offset(dx, dy);
@@ -1492,7 +1492,7 @@ impl Simulation {
     }
 
     fn flee_step(&self, pos: TilePos, from: TilePos) -> Option<TilePos> {
-        let mut best: Option<(f32, TilePos)> = None;
+        let mut best: Option<(i32, TilePos)> = None;
         for neighbor in pos.neighbors8() {
             if !self.is_walkable(neighbor) {
                 continue;
