@@ -1,0 +1,352 @@
+name: Android APK
+
+# Собирает настоящий .apk из Rust-кода без Java/Gradle:
+# cargo-apk упаковывает cdylib в APK с NativeActivity.
+#
+# Готовый файл лежит в артефакте `worldgod-apk` (вкладка Actions → нужный
+# запуск → Artifacts).
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  # write нужен только для публикации отчёта сборки комментарием к коммиту
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  apk:
+    name: Сборка APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Код
+        uses: actions/checkout@v4
+
+      - name: Java 17 (apksigner и zipalign из Android SDK)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools build-tools;35.0.0 platforms;android-35"
+
+      - name: Ключ для подписи release-APK
+        # cargo-apk отказывается собирать `--release` без ключа. Ключ
+        # одноразовый и живёт только внутри запуска, поэтому в репозиторий
+        # ничего не коммитится: путь и пароль передаются переменными
+        # окружения CARGO_APK_RELEASE_KEYSTORE / ..._PASSWORD.
+        run: |
+          keytool -genkeypair -noprompt \
+            -keystore "$RUNNER_TEMP/worldgod.keystore" \
+            -storetype PKCS12 -storepass worldgod -keypass worldgod \
+            -alias worldgod -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=WorldGod CI, O=WorldGod, C=RU"
+          echo "CARGO_APK_RELEASE_KEYSTORE=$RUNNER_TEMP/worldgod.keystore" >> "$GITHUB_ENV"
+          echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=worldgod" >> "$GITHUB_ENV"
+
+
+      - name: Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27
+          add-to-path: false
+
+      - name: Rust и Android-цели
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Кэш зависимостей
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: android-apk
+          workspaces: ". -> target"
+
+      - name: Освободить место на диске
+        # Release-сборка трёх ABI и стек wgpu/glow занимают сотни мегабайт,
+        # а на образе раннера многое занято тулчейнами, которые нам не нужны.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/system-images \
+            /opt/ghc /usr/local/share/boost /usr/share/swift || true
+          df -h / | tail -1
+
+      - name: Установка cargo-apk
+        run: cargo install cargo-apk --version "^0.10"
+
+      - name: Сборка APK (aarch64 + armv7 + x86_64)
+        id: build
+        # Отчёт публикуется отдельным шагом ниже, поэтому сама сборка не
+        # роняет job сразу: иначе лог не успевает попасть в артефакт.
+        continue-on-error: true
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          set +e
+          cargo apk build --release \
+            --manifest-path crates/worldgod_app/Cargo.toml > build.log 2>&1
+          status=$?
+          df -h / | tail -1
+          python3 - "$status" <<'EOF'
+          import re, sys
+
+          status = sys.argv[1]
+          raw = open("build.log", "rb").read()
+          # tail -c может разрезать многобайтовый символ: глушим ошибки
+          text = raw.decode("utf-8", "replace")
+          text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
+          lines = text.splitlines()[-400:]
+          body = "\n".join(lines)[-55000:]
+          report = f"**cargo apk build** (код {status})\n```\n{body}\n```\n"
+          open("report.md", "w", encoding="utf-8").write(report)
+          open("build-log.txt", "w", encoding="utf-8").write(text)
+          print(body[-12000:])
+          # Журнал запуска из песочницы не скачивается, а аннотации
+          # check-run отдаются обычным REST API — хвост лога уезжает
+          # туда одной длинной аннотацией.
+          tail_text = "\n".join(lines[-120:])
+          escaped = (
+              tail_text[-3000:]
+              .replace("%", "%25")
+              .replace("\r", "%0D")
+              .replace("\n", "%0A")
+          )
+          print(f"::error title=apk::код {status}; хвост build.log:%0A{escaped}")
+          print(f"строк в журнале: {len(lines)}")
+          for word in ("Finished", "Signing", "Error", "panicked", "SIGKILL", "No space"):
+              print(f"{word}: {text.count(word)}")
+          # Полный журнал одним архивом: аннотации отдаются обычным API,
+          # поэтому даже без доступа к логам Actions видно всю картину.
+          import base64, gzip
+          blob = base64.b64encode(gzip.compress(raw)).decode()
+          for i in range(0, min(len(blob), 34_200), 3_800):
+              print(f"::error title=apk-log {i//3800 + 1}::" + blob[i:i+3_800])
+          EOF
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
+            "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+            -F "body=@report.md" > /dev/null || echo "отчёт не опубликован"
+          exit $status
+
+      - name: Журнал сборки
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          if-no-files-found: warn
+          retention-days: 7
+          path: build-log.txt
+
+      - name: Подписать APK (apksigner)
+        # Штатно APK подписывает сам cargo-apk, но на подписи он периодически
+        # паникует, уже отдав готовый выровненный файл. Поэтому подпись всегда
+        # проверяется, а при необходимости ставится напрямую тем же ключом.
+        if: always()
+        run: |
+          APK="$(ls target/release/apk/*.apk 2>/dev/null | head -n 1)"
+          if [ -z "$APK" ]; then
+            echo "APK не собран — подписывать нечего"
+            exit 0
+          fi
+          SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          if "$SIGNER" verify "$APK" > /dev/null 2>&1; then
+            echo "APK уже подписан"
+            exit 0
+          fi
+          "$SIGNER" sign --ks "$CARGO_APK_RELEASE_KEYSTORE" \
+            --ks-pass "pass:$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" "$APK"
+          "$SIGNER" verify --verbose "$APK"
+
+      - name: Итог сборки
+        if: steps.build.outcome == 'failure'
+        run: |
+          APK="$(ls target/release/apk/*.apk 2>/dev/null | head -n 1)"
+          SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          if [ -n "$APK" ] && "$SIGNER" verify "$APK" > /dev/null 2>&1; then
+            echo "APK собран и подписан, хотя cargo-apk вернул ошибку — см. build-log."
+            exit 0
+          fi
+          echo "Сборка APK не удалась — подробности в артефакте build-log и в аннотациях."
+          exit 1
+
+      - name: Список собранных файлов
+        run: find target -name '*.apk' -printf '%p — %s байт\n'
+
+      - name: Загрузить APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldgod-apk
+          if-no-files-found: error
+          retention-days: 30
+          path: target/**/*.apk
+
+  # Отдельная сборка «только arm64» — быстрее для проверки PR.
+  apk-arm64:
+    name: APK только arm64 (быстрая проверка)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools build-tools;35.0.0 platforms;android-35"
+
+      - name: Ключ для подписи release-APK
+        run: |
+          keytool -genkeypair -noprompt \
+            -keystore "$RUNNER_TEMP/worldgod.keystore" \
+            -storetype PKCS12 -storepass worldgod -keypass worldgod \
+            -alias worldgod -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=WorldGod CI, O=WorldGod, C=RU"
+          echo "CARGO_APK_RELEASE_KEYSTORE=$RUNNER_TEMP/worldgod.keystore" >> "$GITHUB_ENV"
+          echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=worldgod" >> "$GITHUB_ENV"
+
+      - id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27
+          add-to-path: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-apk-arm64
+          workspaces: ". -> target"
+
+      - name: Освободить место на диске
+        # Release-сборка трёх ABI и стек wgpu/glow занимают сотни мегабайт,
+        # а на образе раннера многое занято тулчейнами, которые нам не нужны.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/system-images \
+            /opt/ghc /usr/local/share/boost /usr/share/swift || true
+          df -h / | tail -1
+
+      - run: cargo install cargo-apk --version "^0.10"
+
+      - name: Сборка
+        id: build
+        continue-on-error: true
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          set +e
+          cargo apk build --release --target aarch64-linux-android \
+            --manifest-path crates/worldgod_app/Cargo.toml > build.log 2>&1
+          status=$?
+          df -h / | tail -1
+          python3 - "$status" <<'EOF'
+          import re, sys
+
+          status = sys.argv[1]
+          raw = open("build.log", "rb").read()
+          text = raw.decode("utf-8", "replace")
+          text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
+          lines = text.splitlines()[-400:]
+          body = "\n".join(lines)[-55000:]
+          report = f"**cargo apk build (arm64)** (код {status})\n```\n{body}\n```\n"
+          open("report.md", "w", encoding="utf-8").write(report)
+          open("build-log-arm64.txt", "w", encoding="utf-8").write(text)
+          print(body[-12000:])
+          # Журнал запуска из песочницы не скачивается, а аннотации
+          # check-run отдаются обычным REST API — хвост лога уезжает
+          # туда одной длинной аннотацией.
+          tail_text = "\n".join(lines[-120:])
+          escaped = (
+              tail_text[-3000:]
+              .replace("%", "%25")
+              .replace("\r", "%0D")
+              .replace("\n", "%0A")
+          )
+          print(f"::error title=apk-arm64::код {status}; хвост build.log:%0A{escaped}")
+          print(f"строк в журнале: {len(lines)}")
+          for word in ("Finished", "Signing", "Error", "panicked", "SIGKILL", "No space"):
+              print(f"{word}: {text.count(word)}")
+          # Полный журнал одним архивом: аннотации отдаются обычным API,
+          # поэтому даже без доступа к логам Actions видно всю картину.
+          import base64, gzip
+          blob = base64.b64encode(gzip.compress(raw)).decode()
+          for i in range(0, min(len(blob), 34_200), 3_800):
+              print(f"::error title=apk-arm64-log {i//3800 + 1}::" + blob[i:i+3_800])
+          EOF
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
+            "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+            -F "body=@report.md" > /dev/null || echo "отчёт не опубликован"
+          exit $status
+
+      - name: Журнал сборки
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-arm64
+          if-no-files-found: warn
+          retention-days: 7
+          path: build-log-arm64.txt
+
+      - name: Подписать APK (apksigner)
+        # Штатно APK подписывает сам cargo-apk, но на подписи он периодически
+        # паникует, уже отдав готовый выровненный файл. Поэтому подпись всегда
+        # проверяется, а при необходимости ставится напрямую тем же ключом.
+        if: always()
+        run: |
+          APK="$(ls target/release/apk/*.apk 2>/dev/null | head -n 1)"
+          if [ -z "$APK" ]; then
+            echo "APK не собран — подписывать нечего"
+            exit 0
+          fi
+          SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          if "$SIGNER" verify "$APK" > /dev/null 2>&1; then
+            echo "APK уже подписан"
+            exit 0
+          fi
+          "$SIGNER" sign --ks "$CARGO_APK_RELEASE_KEYSTORE" \
+            --ks-pass "pass:$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" "$APK"
+          "$SIGNER" verify --verbose "$APK"
+
+      - name: Итог сборки
+        if: steps.build.outcome == 'failure'
+        run: |
+          APK="$(ls target/release/apk/*.apk 2>/dev/null | head -n 1)"
+          SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          if [ -n "$APK" ] && "$SIGNER" verify "$APK" > /dev/null 2>&1; then
+            echo "APK собран и подписан, хотя cargo-apk вернул ошибку — см. build-log."
+            exit 0
+          fi
+          echo "Сборка APK не удалась — подробности в артефакте build-log и в аннотациях."
+          exit 1
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: worldgod-apk-arm64
+          if-no-files-found: error
+          retention-days: 7
+          path: target/**/*.apk

@@ -1,0 +1,12 @@
+[package]
+name = "worldgod_core"
+description = "Детерминированное ядро симуляции WorldGod: карта, кисти, ИИ, страны, бои."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# Ядро принципиально без внешних зависимостей: только std.
+[dependencies]

@@ -1,0 +1,23 @@
+# Сборочные артефакты Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Android / cargo-apk
+*.apk
+*.aab
+/crates/worldgod_app/android/
+
+# Сгенерированные превью (создаются `cargo run -p worldgod_preview`)
+/docs/preview-*.png
+
+# ОС и редакторы
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Python-кэш утилит из tools/
+__pycache__/
+*.pyc

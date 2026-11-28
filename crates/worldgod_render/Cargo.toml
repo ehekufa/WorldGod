@@ -1,0 +1,12 @@
+[package]
+name = "worldgod_render"
+description = "Программный пиксельный рендер карты WorldGod в RGBA-кадр (+ экспорт PNG)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+worldgod_core.workspace = true

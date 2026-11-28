@@ -1,0 +1,17 @@
+[package]
+name = "worldgod_preview"
+description = "Генератор PNG-скриншотов WorldGod без GUI: документация и дымовые тесты."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "worldgod_preview"
+path = "src/main.rs"
+
+[dependencies]
+worldgod_core.workspace = true
+worldgod_render.workspace = true
