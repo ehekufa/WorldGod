@@ -11,8 +11,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use worldgod_core::entity::EntityId;
+use worldgod_core::ore::Ability;
 use worldgod_core::{
-    BuildingKind, Relation, Simulation, Species, TilePos, Tool, ToolConfig, Weather, WorldSize,
+    BuildingKind, Explosive, Relation, Simulation, Species, Tech, TilePos, Tool, ToolConfig,
+    Weather, WorldSize,
 };
 use worldgod_render::{render_scene, Frame, RenderOptions};
 
@@ -36,13 +38,14 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let scenes: [(&str, fn(u32) -> Frame); 6] = [
+    let scenes: [(&str, fn(u32) -> Frame); 7] = [
         ("preview-1-ocean.png", ocean_scene),
         ("preview-2-island.png", island_scene),
         ("preview-3-nation.png", nation_scene),
         ("preview-4-monsters.png", monsters_scene),
         ("preview-5-war.png", war_scene),
         ("preview-6-weather.png", weather_scene),
+        ("preview-7-ore.png", ore_scene),
     ];
 
     let mut failed = false;
@@ -147,6 +150,64 @@ fn monsters_scene(px: u32) -> Frame {
     sim.run(400);
     report("нашествие", &sim);
     render(&sim, px, 12.0)
+}
+
+/// Руды, лаборатория, годзилла и ядерка в одной сцене.
+///
+/// Показывает всё новое сразу: залежи пяти пород, дом-лабораторию страны,
+/// выжженный кратер от ядерки и гиганта, идущего на поселение.
+fn ore_scene(px: u32) -> Frame {
+    let mut sim = Simulation::new(WorldSize::MEDIUM, 5150);
+    build_island(&mut sim);
+    let center = center_of(&sim);
+
+    // Страна с лабораторией: добыча и кладка уже изучены.
+    let capital = land_near(&sim, center.offset(-10, -4));
+    let nation = sim.found_nation_at(capital);
+    if let Some(state) = sim.nation_mut(nation) {
+        state.learn(Tech::Mining);
+        state.learn(Tech::Masonry);
+    }
+    for (dx, dy) in [(-3, -3), (2, -4), (-4, 2), (3, 3)] {
+        let spot = land_near(&sim, capital.offset(dx, dy));
+        if sim.building_at(spot).is_none() {
+            sim.finish_house_for(nation, spot);
+        }
+    }
+    let lab_spot = land_near(&sim, capital.offset(0, -7));
+    if sim.building_at(lab_spot).is_none() {
+        sim.finish_building(BuildingKind::Laboratory, lab_spot, nation);
+    }
+
+    // Залежи всех пяти пород.
+    for (tool, (dx, dy)) in [
+        (Tool::OreStone, (6, -14)),
+        (Tool::OreCoal, (12, -6)),
+        (Tool::OreDiamond, (14, 4)),
+        (Tool::OreRuby, (6, 12)),
+        (Tool::OreEmerald, (-6, 12)),
+    ] {
+        let spot = land_near(&sim, center.offset(dx, dy));
+        sim.apply_tool(ToolConfig::new(tool, 3), spot);
+    }
+
+    // Жители, в том числе двое со способностями из драгоценной руды.
+    let _ = spawn_people(&mut sim, 6);
+    for ability in [Ability::GodMode, Ability::Immortality, Ability::Regeneration] {
+        if let Some(id) = spawn_near_center(&mut sim, Species::Human) {
+            if let Some(entity) = sim.entity_mut(id) {
+                entity.grant(ability);
+            }
+        }
+    }
+
+    // Ядерка оставляет кратер, годзилла идёт к поселению.
+    sim.detonate(Explosive::Nuke, land_near(&sim, center.offset(20, 16)));
+    sim.spawn(Species::Godzilla, land_near(&sim, center.offset(22, -12)));
+
+    sim.run(60);
+    report("руды", &sim);
+    render(&sim, px, 16.0)
 }
 
 /// Две страны на одном острове: война, порты, лодки и штурм домов.
@@ -330,12 +391,15 @@ fn render(sim: &Simulation, px: u32, time: f32) -> Frame {
 fn report(label: &str, sim: &Simulation) {
     let stats = sim.stats;
     println!(
-        "{label}: тик {}, люди {}, страны {}, дома {}, монстры {}, суша {:.1}%, снег {:.1}% ({} тайлов)",
+        "{label}: тик {}, люди {}, страны {}, дома {}, монстры {}, руда {}, лаборатории {}, разработки {}, суша {:.1}%, снег {:.1}% ({} тайлов)",
         stats.tick,
         stats.population,
         stats.nations,
         stats.houses,
         stats.monsters,
+        stats.ore_tiles,
+        stats.laboratories,
+        stats.techs,
         stats.land_fraction * 100.0,
         stats.snow_fraction * 100.0,
         stats.snow_tiles
@@ -400,6 +464,41 @@ mod tests {
         }
         sim.run(60);
         assert!(sim.stats.wars >= 1);
+    }
+
+    #[test]
+    fn ore_scene_has_deposits_laboratory_and_giant() {
+        let mut sim = Simulation::new(WorldSize::SMALL, 5150);
+        build_island(&mut sim);
+        let center = center_of(&sim);
+
+        let capital = land_near(&sim, center.offset(-10, -4));
+        let nation = sim.found_nation_at(capital);
+        let lab_spot = land_near(&sim, capital.offset(0, -7));
+        if sim.building_at(lab_spot).is_none() {
+            sim.finish_building(BuildingKind::Laboratory, lab_spot, nation);
+        }
+        for (tool, (dx, dy)) in [
+            (Tool::OreStone, (6, -14)),
+            (Tool::OreDiamond, (14, 4)),
+            (Tool::OreRuby, (6, 12)),
+        ] {
+            sim.apply_tool(
+                ToolConfig::new(tool, 3),
+                land_near(&sim, center.offset(dx, dy)),
+            );
+        }
+        assert!(sim.world.ore_tiles() > 0, "сцена должна содержать руду");
+
+        // Ядерка и годзилла не должны ломать саму сцену.
+        sim.detonate(Explosive::Nuke, land_near(&sim, center.offset(20, 16)));
+        assert!(sim.spawn(Species::Godzilla, land_near(&sim, center.offset(22, -12))).is_some());
+
+        let frame = render(&sim, 2, 0.0);
+        assert_eq!(
+            frame.size(),
+            (WorldSize::SMALL.width * 2, WorldSize::SMALL.height * 2)
+        );
     }
 
     #[test]

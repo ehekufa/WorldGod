@@ -76,6 +76,8 @@ pub struct AppState {
     last_paint_time: f64,
     last_spawn_time: f64,
     last_weather_time: f64,
+    /// Когда последний раз взрывали (антидребезг для динамита и ядерки).
+    last_explosion_time: f64,
 }
 
 impl AppState {
@@ -105,6 +107,7 @@ impl AppState {
             last_paint_time: 0.0,
             last_spawn_time: 0.0,
             last_weather_time: -1.0,
+            last_explosion_time: -10.0,
         }
     }
 
@@ -212,6 +215,16 @@ impl AppState {
                 return false;
             }
             self.last_spawn_time = self.time;
+            return true;
+        }
+
+        // Взрывчатка срабатывает по одному нажатию: 1.2 с на новую бомбу.
+        if self.tool.tool.is_explosive() {
+            if self.time - self.last_explosion_time < 1.2 {
+                return false;
+            }
+            self.last_explosion_time = self.time;
+            self.last_paint_tile = Some(tile);
             return true;
         }
 

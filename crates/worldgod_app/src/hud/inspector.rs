@@ -19,12 +19,14 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             entity.intent.label_ru(),
             entity.kills,
             entity.hp,
+            entity.abilities_ru(),
+            entity.species.is_giant(),
         )
     }) else {
         return;
     };
 
-    let (species, nation, health, hunger, intent, kills, hp) = info;
+    let (species, nation, health, hunger, intent, kills, hp, abilities, giant) = info;
     let nation_name = state.sim.nation_name(nation).to_string();
     let nation_color = theme::nation_color(state.sim.nation_color(nation));
 
@@ -66,6 +68,23 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         });
     });
     widgets::bar(ui, health, health_color(health), 6.0);
+
+    // Способности из драгоценной руды: бессмертие, режим бога, регенерация…
+    if !abilities.is_empty() {
+        ui.add_space(3.0);
+        ui.label(
+            RichText::new(format!("Способности: {abilities}"))
+                .size(11.0)
+                .color(theme::WARNING),
+        );
+    }
+    if giant {
+        ui.label(
+            RichText::new("Гигант: ломает дома и топчет всех вокруг")
+                .size(11.0)
+                .color(theme::DANGER),
+        );
+    }
 }
 
 fn health_color(health: f32) -> egui::Color32 {

@@ -2,6 +2,7 @@
 
 use crate::grid::{for_each_in_radius, TilePos};
 use crate::noise;
+use crate::ore::OreKind;
 use crate::rng::Rng;
 use crate::terrain::{
     default_elevation, default_moisture, terrain_at, Terrain, MAX_ELEVATION, SEA_LEVEL,
@@ -21,6 +22,10 @@ pub struct Tile {
     /// Снег не меняет тип рельефа: он тает со временем, замедляет ходьбу
     /// и просто подкрашивает тайл в рендере.
     pub snow: u8,
+    /// Код породы руды (0 — руды нет), см. [`OreKind::from_code`].
+    pub ore: u8,
+    /// Сколько руды осталось в залежи.
+    pub ore_amount: u8,
 }
 
 impl Tile {
@@ -47,6 +52,19 @@ impl Tile {
     /// Тайл заметно замедлен снегом?
     pub fn is_snowy(&self) -> bool {
         self.snow >= 120
+    }
+
+    /// Порода руды в тайле, если залежь ещё не выбрана.
+    pub fn ore_kind(&self) -> Option<OreKind> {
+        if self.ore_amount == 0 {
+            return None;
+        }
+        OreKind::from_code(self.ore)
+    }
+
+    /// Есть ли в тайле руда.
+    pub fn has_ore(&self) -> bool {
+        self.ore_kind().is_some()
     }
 }
 
@@ -87,6 +105,8 @@ impl World {
                     moisture,
                     variant: (rng.next_u32() % 4) as u8,
                     snow: 0,
+                    ore: 0,
+                    ore_amount: 0,
                 });
             }
         }
@@ -186,6 +206,71 @@ impl World {
     /// Снежный покров тайла; за границей карты — 0.
     pub fn snow(&self, p: TilePos) -> u8 {
         self.tile(p).map_or(0, |t| t.snow)
+    }
+
+    /// Порода руды в тайле.
+    pub fn ore(&self, p: TilePos) -> Option<OreKind> {
+        self.tile(p).and_then(|tile| tile.ore_kind())
+    }
+
+    /// Сколько руды осталось.
+    pub fn ore_amount(&self, p: TilePos) -> u8 {
+        self.tile(p).map_or(0, |tile| tile.ore_amount)
+    }
+
+    /// Кладёт руду в тайл. Возвращает `true`, если что-то изменилось.
+    pub fn set_ore(&mut self, p: TilePos, kind: OreKind, amount: u8) -> bool {
+        let Some(index) = self.index(p) else {
+            return false;
+        };
+        let amount = amount.max(1);
+        let tile = &mut self.tiles[index];
+        if tile.ore == kind.code() && tile.ore_amount == amount {
+            return false;
+        }
+        tile.ore = kind.code();
+        tile.ore_amount = amount;
+        self.bump_revision();
+        true
+    }
+
+    /// Убирает руду из тайла.
+    pub fn clear_ore(&mut self, p: TilePos) -> bool {
+        let Some(index) = self.index(p) else {
+            return false;
+        };
+        let tile = &mut self.tiles[index];
+        if tile.ore == 0 && tile.ore_amount == 0 {
+            return false;
+        }
+        tile.ore = 0;
+        tile.ore_amount = 0;
+        self.bump_revision();
+        true
+    }
+
+    /// Выкапывает руду: уменьшает залежь и возвращает породу.
+    /// Когда руда кончилась, тайл становится пустым.
+    pub fn take_ore(&mut self, p: TilePos, amount: u8) -> Option<OreKind> {
+        let kind = self.ore(p)?;
+        let Some(index) = self.index(p) else {
+            return None;
+        };
+        let left = self.tiles[index].ore_amount.saturating_sub(amount.max(1));
+        self.tiles[index].ore_amount = left;
+        if left == 0 {
+            self.tiles[index].ore = 0;
+        }
+        self.bump_revision();
+        Some(kind)
+    }
+
+    /// Сколько тайлов с рудой на карте.
+    pub fn ore_tiles(&self) -> u32 {
+        self.tiles
+            .iter()
+            .filter(|tile| tile.ore_amount > 0)
+            .count() as u32
     }
 
     /// Можно ли ходить по тайлу.
@@ -463,8 +548,15 @@ impl World {
             moisture,
             variant: old.variant,
             snow: old.snow,
+            ore: old.ore,
+            ore_amount: old.ore_amount,
         };
         let is_land = self.tiles[index].terrain().is_land();
+        // Затопленная или срытая залежь исчезает: руда — ресурс суши.
+        if !is_land {
+            self.tiles[index].ore = 0;
+            self.tiles[index].ore_amount = 0;
+        }
         match (was_land, is_land) {
             (false, true) => self.land_tiles += 1,
             (true, false) => self.land_tiles = self.land_tiles.saturating_sub(1),

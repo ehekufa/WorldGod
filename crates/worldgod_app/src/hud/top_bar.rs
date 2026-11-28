@@ -47,6 +47,29 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             widgets::stat_chip(ui, "суша", &land, theme::WARNING);
             budget -= widgets::stat_chip_width(ui, "суша", &land) + 8.0;
         }
+        // Рудные залежи — только когда они есть на карте.
+        if stats.ore_tiles > 0 {
+            let ore = stats.ore_tiles.to_string();
+            if widgets::stat_chip_width(ui, "руда", &ore) <= budget {
+                widgets::stat_chip(ui, "руда", &ore, theme::WARNING);
+                budget -= widgets::stat_chip_width(ui, "руда", &ore) + 8.0;
+            }
+        }
+        // Разработки: «2/4» — сколько открыто стран из четырёх.
+        if stats.techs > 0 {
+            let techs = format!("{}/4", stats.techs.min(4));
+            if widgets::stat_chip_width(ui, "наука", &techs) <= budget {
+                widgets::stat_chip(ui, "наука", &techs, theme::ACCENT);
+                budget -= widgets::stat_chip_width(ui, "наука", &techs) + 8.0;
+            }
+        }
+        if stats.laboratories > 0 {
+            let labs = stats.laboratories.to_string();
+            if widgets::stat_chip_width(ui, "лаборатория", &labs) <= budget {
+                widgets::stat_chip(ui, "лаборатория", &labs, theme::STORM);
+                budget -= widgets::stat_chip_width(ui, "лаборатория", &labs) + 8.0;
+            }
+        }
         // Снег показываем, только когда он лежит: «12% снег».
         if stats.snow_tiles > 0 {
             let snow = format!("{:.0}%", stats.snow_fraction * 100.0);

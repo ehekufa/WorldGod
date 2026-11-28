@@ -41,6 +41,7 @@ pub fn think_all(sim: &mut Simulation) {
             Species::Wolf | Species::Zombie => think_predator(sim, index),
             Species::Deer => think_prey(sim, index),
             Species::Boat => think_boat(sim, index),
+            Species::Godzilla => think_godzilla(sim, index),
         }
     }
 }
@@ -172,6 +173,23 @@ fn think_civilian(sim: &mut Simulation, index: usize, me: EntityView) {
     // 6. Нечего делать — гуляем вокруг столицы.
     let center = sim.nation(nation).map_or(me.pos, |nation| nation.capital);
     wander_around(sim, index, me.pos, center, 8);
+}
+
+/// Годзилла: идёт к ближайшим людям, а если их нет — к поселению.
+/// Урон по округе наносит [`Simulation::godzilla_pass`], от неё нужен
+/// только путь к цели.
+fn think_godzilla(sim: &mut Simulation, index: usize) {
+    let me = sim.entities[index].view();
+    let stats = me.species.stats();
+    if let Some(victim) = sim.nearest_hostile_view(&me, stats.aggro_radius) {
+        sim.entities[index].assign(Intent::Attack { target: victim });
+        return;
+    }
+    if let Some((_, center)) = sim.nearest_nation_center(me.pos, 60) {
+        sim.entities[index].assign(Intent::Wander { goal: center });
+        return;
+    }
+    wander(sim, index, me.pos, 10);
 }
 
 fn think_predator(sim: &mut Simulation, index: usize) {

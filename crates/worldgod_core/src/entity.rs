@@ -3,6 +3,7 @@
 use crate::building::BuildingId;
 use crate::grid::TilePos;
 use crate::nation::NationId;
+use crate::ore::Ability;
 use crate::species::{Species, Stats};
 
 /// Идентификатор существа. Уникален в пределах одной симуляции.
@@ -117,6 +118,8 @@ pub struct Entity {
     pub age: u32,
     /// Убийства.
     pub kills: u32,
+    /// Маска способностей из руды ([`Ability::bit`]).
+    pub abilities: u8,
     /// Кто ударил последним (для мести и паники).
     pub last_attacker: Option<EntityId>,
     /// Смотрит влево?
@@ -153,6 +156,7 @@ impl Entity {
             hunger: 0,
             age: 0,
             kills: 0,
+            abilities: 0,
             last_attacker: None,
             facing_left: false,
             variant,
@@ -163,6 +167,64 @@ impl Entity {
     /// Характеристики вида.
     pub fn stats(&self) -> &'static Stats {
         self.species.stats()
+    }
+
+    /// Есть ли у существа способность.
+    pub fn has(&self, ability: Ability) -> bool {
+        self.abilities & ability.bit() != 0
+    }
+
+    /// Выдаёт способность. Возвращает `true`, если она появилась впервые.
+    pub fn grant(&mut self, ability: Ability) -> bool {
+        let bit = ability.bit();
+        if self.abilities & bit != 0 {
+            return false;
+        }
+        self.abilities |= bit;
+        true
+    }
+
+    /// Бессмертие: здоровье не опускается ниже единицы.
+    pub fn is_immortal(&self) -> bool {
+        self.has(Ability::Immortality) || self.has(Ability::GodMode)
+    }
+
+    /// Неуязвимость: урон по такому существу не проходит.
+    pub fn is_invulnerable(&self) -> bool {
+        self.has(Ability::GodMode)
+    }
+
+    /// Итоговый урон удара с учётом способностей.
+    ///
+    /// «Огненный удар» добавляет половину, «режим бога» — утроенный урон.
+    pub fn attack_damage(&self, base: i32) -> i32 {
+        let base = base.max(1);
+        if self.has(Ability::GodMode) {
+            base * 3
+        } else if self.has(Ability::Fire) {
+            base + base / 2
+        } else {
+            base
+        }
+    }
+
+    /// Сколько урона реально проходит по существу.
+    ///
+    /// «Стойкость» режет урон вдвое, «режим бога» отменяет его целиком.
+    pub fn incoming_damage(&self, amount: i32) -> i32 {
+        let amount = amount.max(1);
+        if self.is_invulnerable() {
+            0
+        } else if self.has(Ability::Toughness) {
+            (amount / 2).max(1)
+        } else {
+            amount
+        }
+    }
+
+    /// Подпись способностей для интерфейса.
+    pub fn abilities_ru(&self) -> String {
+        crate::ore::abilities_ru(self.abilities)
     }
 
     /// Максимальное здоровье.

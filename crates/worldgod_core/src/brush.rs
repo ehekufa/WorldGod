@@ -4,7 +4,9 @@
 //! затухает, плюс немного шума, чтобы берега получались живыми, а не
 //! «циркулем».
 
+use crate::explosives::Explosive;
 use crate::grid::{for_each_in_radius, TilePos};
+use crate::ore::OreKind;
 use crate::rng::Rng;
 use crate::species::Species;
 use crate::terrain::{MAX_ELEVATION, SEA_LEVEL};
@@ -46,6 +48,22 @@ pub enum Tool {
     Rain,
     /// Стихия: снегопад.
     Snowfall,
+    /// Залежь камня.
+    OreStone,
+    /// Залежь угля.
+    OreCoal,
+    /// Залежь алмазов.
+    OreDiamond,
+    /// Залежь рубинов.
+    OreRuby,
+    /// Залежь изумрудов.
+    OreEmerald,
+    /// Годзилла: гигантский монстр.
+    Godzilla,
+    /// Динамит: точечный взрыв.
+    Dynamite,
+    /// Ядерка: взрыв на пол-острова.
+    Nuke,
 }
 
 /// Категория инструментов — вкладка нижней панели.
@@ -57,20 +75,26 @@ pub enum Tool {
 pub enum ToolCategory {
     /// Суша, вода, лес, пляж, горы.
     Terrain,
-    /// Люди, воины, олени, волки, зомби.
+    /// Камень, уголь, алмаз, рубин, изумруд.
+    Ore,
+    /// Люди, воины, олени, волки, зомби, годзилла.
     Life,
     /// Ураган, вспышка солнца, дождь, снегопад.
     Weather,
+    /// Динамит и ядерка.
+    Explosive,
     /// Осмотр существ и кисть «Война / Мир».
     Other,
 }
 
 impl ToolCategory {
     /// Все категории в порядке вкладок.
-    pub const ALL: [ToolCategory; 4] = [
+    pub const ALL: [ToolCategory; 6] = [
         Self::Terrain,
+        Self::Ore,
         Self::Life,
         Self::Weather,
+        Self::Explosive,
         Self::Other,
     ];
 
@@ -78,8 +102,10 @@ impl ToolCategory {
     pub fn label_ru(self) -> &'static str {
         match self {
             Self::Terrain => "Рельеф",
+            Self::Ore => "Руды",
             Self::Life => "Жизнь",
             Self::Weather => "Стихии",
+            Self::Explosive => "Взрыв",
             Self::Other => "Прочее",
         }
     }
@@ -88,8 +114,10 @@ impl ToolCategory {
     pub fn tools(self) -> &'static [Tool] {
         match self {
             Self::Terrain => &Tool::TERRAIN,
+            Self::Ore => &Tool::ORE,
             Self::Life => &Tool::SPAWN,
             Self::Weather => &Tool::WEATHER,
+            Self::Explosive => &Tool::EXPLOSIVE,
             Self::Other => &Tool::OTHER,
         }
     }
@@ -102,21 +130,29 @@ impl ToolCategory {
 
 impl Tool {
     /// Все инструменты по категориям (в порядке вкладок).
-    pub const ALL: [Tool; 16] = [
+    pub const ALL: [Tool; 24] = [
         Self::Raise,
         Self::Lower,
         Self::Forest,
         Self::Sand,
         Self::Mountain,
+        Self::OreStone,
+        Self::OreCoal,
+        Self::OreDiamond,
+        Self::OreRuby,
+        Self::OreEmerald,
         Self::Human,
         Self::Soldier,
         Self::Deer,
         Self::Wolf,
         Self::Zombie,
+        Self::Godzilla,
         Self::Hurricane,
         Self::SolarFlare,
         Self::Rain,
         Self::Snowfall,
+        Self::Dynamite,
+        Self::Nuke,
         Self::Inspect,
         Self::Diplomacy,
     ];
@@ -131,13 +167,26 @@ impl Tool {
     ];
 
     /// Кисти заселения.
-    pub const SPAWN: [Tool; 5] = [
+    pub const SPAWN: [Tool; 6] = [
         Self::Human,
         Self::Soldier,
         Self::Deer,
         Self::Wolf,
         Self::Zombie,
+        Self::Godzilla,
     ];
+
+    /// Кисти руды.
+    pub const ORE: [Tool; 5] = [
+        Self::OreStone,
+        Self::OreCoal,
+        Self::OreDiamond,
+        Self::OreRuby,
+        Self::OreEmerald,
+    ];
+
+    /// Взрывчатка.
+    pub const EXPLOSIVE: [Tool; 2] = [Self::Dynamite, Self::Nuke];
 
     /// Стихии.
     pub const WEATHER: [Tool; 4] = [
@@ -156,10 +205,17 @@ impl Tool {
             Self::Raise | Self::Lower | Self::Forest | Self::Sand | Self::Mountain => {
                 ToolCategory::Terrain
             }
-            Self::Human | Self::Soldier | Self::Deer | Self::Wolf | Self::Zombie => {
-                ToolCategory::Life
+            Self::OreStone | Self::OreCoal | Self::OreDiamond | Self::OreRuby | Self::OreEmerald => {
+                ToolCategory::Ore
             }
+            Self::Human
+            | Self::Soldier
+            | Self::Deer
+            | Self::Wolf
+            | Self::Zombie
+            | Self::Godzilla => ToolCategory::Life,
             Self::Hurricane | Self::SolarFlare | Self::Rain | Self::Snowfall => ToolCategory::Weather,
+            Self::Dynamite | Self::Nuke => ToolCategory::Explosive,
             Self::Inspect | Self::Diplomacy => ToolCategory::Other,
         }
     }
@@ -183,6 +239,14 @@ impl Tool {
             Self::SolarFlare => "Вспышка",
             Self::Rain => "Дождь",
             Self::Snowfall => "Снег",
+            Self::OreStone => "Камень",
+            Self::OreCoal => "Уголь",
+            Self::OreDiamond => "Алмаз",
+            Self::OreRuby => "Рубин",
+            Self::OreEmerald => "Изумруд",
+            Self::Godzilla => "Годзилла",
+            Self::Dynamite => "Динамит",
+            Self::Nuke => "Ядерка",
         }
     }
 
@@ -205,6 +269,14 @@ impl Tool {
             Self::SolarFlare => Weather::SolarFlare.hint_ru(),
             Self::Rain => Weather::Rain.hint_ru(),
             Self::Snowfall => Weather::Snowfall.hint_ru(),
+            Self::OreStone => OreKind::Stone.hint_ru(),
+            Self::OreCoal => OreKind::Coal.hint_ru(),
+            Self::OreDiamond => OreKind::Diamond.hint_ru(),
+            Self::OreRuby => OreKind::Ruby.hint_ru(),
+            Self::OreEmerald => OreKind::Emerald.hint_ru(),
+            Self::Godzilla => "Гигантский монстр: ломает дома и армии",
+            Self::Dynamite => Explosive::Dynamite.hint_ru(),
+            Self::Nuke => Explosive::Nuke.hint_ru(),
         }
     }
 
@@ -227,6 +299,14 @@ impl Tool {
             Self::SolarFlare => Weather::SolarFlare.accent_rgb(),
             Self::Rain => Weather::Rain.accent_rgb(),
             Self::Snowfall => Weather::Snowfall.accent_rgb(),
+            Self::OreStone => OreKind::Stone.color_rgb(),
+            Self::OreCoal => OreKind::Coal.color_rgb(),
+            Self::OreDiamond => OreKind::Diamond.color_rgb(),
+            Self::OreRuby => OreKind::Ruby.color_rgb(),
+            Self::OreEmerald => OreKind::Emerald.color_rgb(),
+            Self::Godzilla => [96, 148, 96],
+            Self::Dynamite => Explosive::Dynamite.accent_rgb(),
+            Self::Nuke => Explosive::Nuke.accent_rgb(),
         }
     }
 
@@ -259,9 +339,40 @@ impl Tool {
         }
     }
 
-    /// Кисть работает кругом с радиусом (рельеф и стихии).
+    /// Кисть руды.
+    pub fn ore(self) -> Option<OreKind> {
+        match self {
+            Self::OreStone => Some(OreKind::Stone),
+            Self::OreCoal => Some(OreKind::Coal),
+            Self::OreDiamond => Some(OreKind::Diamond),
+            Self::OreRuby => Some(OreKind::Ruby),
+            Self::OreEmerald => Some(OreKind::Emerald),
+            _ => None,
+        }
+    }
+
+    /// Кисть руды?
+    pub fn is_ore(self) -> bool {
+        self.ore().is_some()
+    }
+
+    /// Какой взрыв ставит инструмент.
+    pub fn explosive(self) -> Option<Explosive> {
+        match self {
+            Self::Dynamite => Some(Explosive::Dynamite),
+            Self::Nuke => Some(Explosive::Nuke),
+            _ => None,
+        }
+    }
+
+    /// Это взрывчатка?
+    pub fn is_explosive(self) -> bool {
+        self.explosive().is_some()
+    }
+
+    /// Кисть работает кругом с радиусом (рельеф, руды и стихии).
     pub fn is_paint(self) -> bool {
-        self.is_terrain() || self.is_weather()
+        self.is_terrain() || self.is_weather() || self.is_ore()
     }
 
     /// Существо, которое ставит инструмент.
@@ -272,6 +383,7 @@ impl Tool {
             Self::Deer => Some(Species::Deer),
             Self::Wolf => Some(Species::Wolf),
             Self::Zombie => Some(Species::Zombie),
+            Self::Godzilla => Some(Species::Godzilla),
             _ => None,
         }
     }
@@ -573,6 +685,28 @@ mod tests {
         assert_eq!(Tool::Human.spawn_count(), 1);
         assert!(Tool::Forest.is_terrain());
         assert!(!Tool::Human.is_terrain());
+    }
+
+    #[test]
+    fn ore_and_explosive_tools_map_to_kinds() {
+        assert_eq!(Tool::OreDiamond.ore(), Some(OreKind::Diamond));
+        assert_eq!(Tool::OreStone.ore(), Some(OreKind::Stone));
+        assert_eq!(Tool::Raise.ore(), None);
+        assert!(Tool::OreRuby.is_ore());
+        assert!(Tool::OreRuby.is_paint());
+        assert!(!Tool::OreRuby.is_terrain());
+
+        assert_eq!(Tool::Nuke.explosive(), Some(Explosive::Nuke));
+        assert!(Tool::Dynamite.is_explosive());
+        assert!(!Tool::Dynamite.is_paint(), "у взрывчатки свой радиус");
+        assert_eq!(Tool::Godzilla.species(), Some(Species::Godzilla));
+
+        for tool in Tool::ORE {
+            assert_eq!(tool.category(), ToolCategory::Ore);
+        }
+        for tool in Tool::EXPLOSIVE {
+            assert_eq!(tool.category(), ToolCategory::Explosive);
+        }
     }
 
     #[test]

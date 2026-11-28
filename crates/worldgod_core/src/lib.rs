@@ -16,6 +16,10 @@
 //!   лес, насыпать пляж, поднять горы, заселить мир существами, объявить
 //!   войну или союз между странами и обрушить стихию. Инструменты разложены
 //!   по категориям ([`ToolCategory`]): рельеф, жизнь, стихии, прочее.
+//! * [`ore`] — руды (камень, уголь, алмаз, рубин, изумруд) и способности,
+//!   которые они дают жителям: бессмертие, режим бога, регенерация.
+//! * [`tech`] — разработки страны: добыча → кладка → химия → атом.
+//! * [`explosives`] — динамит и ядерка: воронки, урон и выжженная земля.
 //! * [`weather`] — стихии: ураган, вспышка солнца, дождь, снегопад. Снег
 //!   хранится отдельным слоем тайла и тает сам, остальные стихии меняют
 //!   влажность и высоту, а по постройкам и существам бьют через
@@ -58,15 +62,18 @@ pub mod camera;
 pub mod combat;
 pub mod entity;
 pub mod events;
+pub mod explosives;
 pub mod grid;
 pub mod math;
 pub mod names;
 pub mod nation;
 pub mod noise;
+pub mod ore;
 pub mod pathfind;
 pub mod rng;
 pub mod sim;
 pub mod species;
+pub mod tech;
 pub mod terrain;
 pub mod weather;
 pub mod world;
@@ -76,12 +83,15 @@ pub use building::{Building, BuildingId, BuildingKind};
 pub use camera::ViewTransform;
 pub use entity::{Entity, EntityId, Intent};
 pub use events::{EventKind, EventLog, GameEvent};
+pub use explosives::{Explosive, ExplosionReport};
 pub use grid::{pos, TilePos};
 pub use math::Vec2;
 pub use nation::{Diplomacy, Nation, NationId, Relation};
+pub use ore::{Ability, OreKind};
 pub use rng::Rng;
 pub use sim::{Simulation, Speed, Stats, WorldSize, SIM_HZ};
 pub use species::Species;
+pub use tech::Tech;
 pub use terrain::{Terrain, SEA_LEVEL};
 pub use weather::{Weather, WeatherReport};
 pub use world::{Tile, World};

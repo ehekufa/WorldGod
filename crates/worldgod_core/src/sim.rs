@@ -9,12 +9,15 @@ use crate::building::{Building, BuildingId, BuildingKind};
 use crate::combat;
 use crate::entity::{Entity, EntityId, EntityView, Intent};
 use crate::events::{EventKind, EventLog};
+use crate::explosives::{Explosive, ExplosionReport};
 use crate::grid::{for_each_in_radius, TilePos};
 use crate::names;
 use crate::nation::{Diplomacy, Nation, NationId, Relation, NATION_PALETTE};
+use crate::ore::{self, Ability};
 use crate::pathfind::{greedy_step, PathFinder};
 use crate::rng::Rng;
 use crate::species::Species;
+use crate::tech::Tech;
 use crate::weather::{Weather, WeatherReport};
 use crate::world::World;
 
@@ -148,6 +151,8 @@ pub struct Stats {
     pub population: u32,
     /// Монстров всего.
     pub monsters: u32,
+    /// Годзилл на карте.
+    pub godzillas: u32,
     /// Готовые дома.
     pub houses: u32,
     /// Костры.
@@ -168,6 +173,14 @@ pub struct Stats {
     pub snow_tiles: u32,
     /// Средний снежный покров по карте 0.0..=1.0.
     pub snow_fraction: f32,
+    /// Тайлов с рудой.
+    pub ore_tiles: u32,
+    /// Лабораторий.
+    pub laboratories: u32,
+    /// Изучено разработок всеми странами.
+    pub techs: u32,
+    /// Жителей со способностями из руды.
+    pub abilities: u32,
     /// Доля суши 0.0..=1.0.
     pub land_fraction: f32,
     /// Тайлов суши.
@@ -251,6 +264,15 @@ impl Simulation {
 
     /// Сколько снега сходит за один шаг таяния.
     const SNOW_MELT_STEP: u8 = 3;
+
+    /// Сколько тиков между шагами науки.
+    const RESEARCH_INTERVAL: u64 = 20;
+
+    /// Сколько тиков между ударами годзиллы по округе.
+    const RAMPAGE_INTERVAL: u64 = 10;
+
+    /// Сколько тиков между «бомбовыми» ходами воюющих стран.
+    const BOMB_INTERVAL: u64 = 150;
 
     /// Создаёт мир-океан без единого клочка суши.
     pub fn new(size: WorldSize, seed: u64) -> Self {
@@ -981,6 +1003,24 @@ impl Simulation {
             return self.cast_weather(kind, center, config.clamped_radius()).tiles;
         }
 
+        if let Some(kind) = config.tool.ore() {
+            let changed =
+                ore::paint(&mut self.world, kind, center, config.clamped_radius(), &mut self.rng);
+            if changed > 0 {
+                self.after_terrain_change();
+                self.events.push(
+                    self.tick,
+                    EventKind::Nature,
+                    format!("Залежь: {} · {} тайлов", kind.name_ru(), changed),
+                );
+            }
+            return changed;
+        }
+
+        if let Some(kind) = config.tool.explosive() {
+            return self.detonate(kind, center).tiles;
+        }
+
         if config.tool.is_terrain() {
             let changed = brush::paint(&mut self.world, config, center, &mut self.rng);
             if changed > 0 {
@@ -992,6 +1032,14 @@ impl Simulation {
         match config.tool {
             Tool::Inspect => {
                 self.selected = self.nearest_of(center, 2, |_| true);
+                // Осмотр пустой земли: если под пальцем руда, рассказываем,
+                // какую способность она даёт.
+                if self.selected.is_none() {
+                    if let Some(kind) = self.world.ore(center) {
+                        self.events
+                            .push(self.tick, EventKind::Nature, kind.inspect_ru());
+                    }
+                }
                 0
             }
             tool => {
@@ -1016,6 +1064,89 @@ impl Simulation {
                 spawned
             }
         }
+    }
+
+    /// Взрывает динамит или ядерку: воронка, выжженная земля, урон по
+    /// постройкам и существам.
+    ///
+    /// Урон падает от центра к краю, способности существ учитываются
+    /// ([`Entity::incoming_damage`]): «режим бога» взрыв не берёт вовсе.
+    pub fn detonate(&mut self, kind: Explosive, center: TilePos) -> ExplosionReport {
+        let radius = kind.radius();
+        let (craters, ore_lost) =
+            crate::explosives::crater(&mut self.world, center, radius, kind.crater_depth(), &mut self.rng);
+        let mut report = ExplosionReport {
+            tiles: craters,
+            craters,
+            ore_lost,
+            ..ExplosionReport::default()
+        };
+
+        let targets: Vec<usize> = self
+            .buildings
+            .iter()
+            .enumerate()
+            .filter(|(_, building)| {
+                building.pos.distance(center) <= radius as f32
+                    && building.kind.can_be_destroyed()
+                    && !building.is_destroyed()
+            })
+            .map(|(index, _)| index)
+            .collect();
+        for index in targets {
+            let falloff = self.buildings[index].pos.distance(center) / radius as f32;
+            let damage = (kind.building_damage() as f32 * (1.0 - falloff * 0.7)) as i32;
+            report.buildings_hit += 1;
+            if self.damage_building_cause(index, damage.max(1), "взрывом") {
+                report.buildings_ruined += 1;
+            }
+        }
+
+        let victims: Vec<usize> = self
+            .entities
+            .iter()
+            .enumerate()
+            .filter(|(_, entity)| entity.alive && entity.pos.distance(center) <= radius as f32)
+            .map(|(index, _)| index)
+            .collect();
+        for index in victims {
+            let falloff = self.entities[index].pos.distance(center) / radius as f32;
+            let damage = (kind.entity_damage() as f32 * (1.0 - falloff * 0.7)) as i32;
+            report.entities_hurt += 1;
+            if self.hurt_entity(index, damage.max(1)) {
+                report.entities_killed += 1;
+                let species = self.entities[index].species;
+                self.kill(index, None);
+                self.events.push(
+                    self.tick,
+                    EventKind::Death,
+                    format!("{} погиб(ла) от взрыва", species.name_ru()),
+                );
+            }
+        }
+
+        self.after_terrain_change();
+        self.events
+            .push(self.tick, EventKind::Combat, report.summary_ru(kind));
+        report
+    }
+
+    /// Наносит существу урон с учётом способностей.
+    ///
+    /// Возвращает `true`, если после удара существо мертво: бессмертные
+    /// и «режим бога» не умирают никогда.
+    pub fn hurt_entity(&mut self, index: usize, amount: i32) -> bool {
+        if index >= self.entities.len() || !self.entities[index].alive {
+            return false;
+        }
+        let taken = self.entities[index].incoming_damage(amount);
+        if taken > 0 {
+            self.entities[index].hp -= taken;
+        }
+        if self.entities[index].hp <= 0 && self.entities[index].is_immortal() {
+            self.entities[index].hp = 1;
+        }
+        !self.entities[index].is_alive()
     }
 
     /// Обрушивает стихию: меняет тайлы, бьёт по постройкам и существам
@@ -1097,8 +1228,7 @@ impl Simulation {
 
         for index in targets {
             report.entities_hurt += 1;
-            self.entities[index].hp -= damage;
-            if self.entities[index].hp > 0 {
+            if !self.hurt_entity(index, damage) {
                 continue;
             }
             let species = self.entities[index].species;
@@ -1179,7 +1309,10 @@ impl Simulation {
 
         ai::think_all(self);
         self.move_pass();
+        self.ore_pass();
         combat::resolve(self);
+        self.godzilla_pass();
+        self.bomb_pass();
         self.economy_pass();
         self.finish_tick();
     }
@@ -1206,6 +1339,10 @@ impl Simulation {
         // Снег тает сам: мир не остаётся белым навсегда.
         if self.tick % Self::SNOW_MELT_INTERVAL == 0 {
             self.world.melt_snow(Self::SNOW_MELT_STEP);
+        }
+
+        if self.tick % Self::RESEARCH_INTERVAL == 0 {
+            self.research_pass();
         }
 
         if self.territory_dirty {
@@ -1368,6 +1505,247 @@ impl Simulation {
         best.map(|(_, pos)| pos)
     }
 
+    /// Добыча руды: жители страны, изучившей «Добычу», выкапывают залежь,
+    /// под которой стоят, приносят науку и иногда получают способность.
+    fn ore_pass(&mut self) {
+        for index in 0..self.entities.len() {
+            if !self.entities[index].alive {
+                continue;
+            }
+            let species = self.entities[index].species;
+            if !species.is_humanoid() {
+                continue;
+            }
+            let Some(nation_id) = self.entities[index].nation else {
+                continue;
+            };
+            if !self
+                .nation(nation_id)
+                .is_some_and(|nation| nation.knows(Tech::Mining))
+            {
+                continue;
+            }
+            // Добываем не каждый тик: залежь должна расходоваться постепенно.
+            if (self.tick + self.entities[index].id as u64) % 3 != 0 {
+                continue;
+            }
+            let pos = self.entities[index].pos;
+            let Some(kind) = self.world.take_ore(pos, 1) else {
+                continue;
+            };
+
+            if let Some(nation) = self.nation_mut(nation_id) {
+                nation.research += kind.research_points();
+                nation.ore_mined += 1;
+            }
+
+            if kind.is_gem() && self.rng.chance(kind.ability_chance()) {
+                let ability = kind.ability();
+                if self.entities[index].grant(ability) {
+                    let name = self.nation_name(Some(nation_id)).to_string();
+                    self.events.push(
+                        self.tick,
+                        EventKind::Nature,
+                        format!(
+                            "{name}: житель добыл {} и получил «{}»",
+                            kind.name_accusative_ru(),
+                            ability.name_ru()
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Наука: дома и лаборатории приносят очки, страна изучает разработки
+    /// по порядку — добыча, кладка, химия, атом.
+    fn research_pass(&mut self) {
+        let mut learned: Vec<(NationId, Tech)> = Vec::new();
+        for index in 0..self.nations.len() {
+            let id = self.nations[index].id;
+            let points: u32 = self
+                .buildings
+                .iter()
+                .filter(|building| building.nation == Some(id) && building.is_complete())
+                .map(|building| building.kind.research_per_tick())
+                .sum();
+            let Some(tech) = self.nations[index].next_tech() else {
+                self.nations[index].research = 0;
+                continue;
+            };
+            self.nations[index].research += points;
+            if self.nations[index].research >= tech.cost() {
+                self.nations[index].learn(tech);
+                self.nations[index].research = 0;
+                learned.push((id, tech));
+            }
+        }
+
+        for (id, tech) in learned {
+            let name = self.nation_name(Some(id)).to_string();
+            self.events.push(
+                self.tick,
+                EventKind::Nation,
+                format!(
+                    "{name}: изучена разработка «{}» — {}",
+                    tech.name_ru(),
+                    tech.hint_ru()
+                ),
+            );
+            if tech == Tech::Masonry {
+                self.try_build_laboratory(id);
+            }
+        }
+    }
+
+    /// Строит лабораторию рядом со столицей, если её ещё нет.
+    pub fn try_build_laboratory(&mut self, nation: NationId) -> Option<BuildingId> {
+        if self
+            .buildings
+            .iter()
+            .any(|building| building.nation == Some(nation) && building.kind == BuildingKind::Laboratory)
+        {
+            return None;
+        }
+        let capital = self.nation(nation)?.capital;
+
+        let mut best: Option<(f32, TilePos)> = None;
+        for_each_in_radius(capital, 8, |p, distance| {
+            if !self.world.is_land(p) || !self.world.is_walkable(p) {
+                return;
+            }
+            if self.buildings.iter().any(|building| building.pos == p) {
+                return;
+            }
+            if self.world.ore(p).is_some() {
+                return;
+            }
+            if best.is_some_and(|(best_distance, _)| distance >= best_distance) {
+                return;
+            }
+            best = Some((distance, p));
+        });
+
+        let (_, spot) = best?;
+        Some(self.finish_building(BuildingKind::Laboratory, spot, nation))
+    }
+
+    /// Годзилла бьёт по всему вокруг: и по жителям, и по постройкам.
+    fn godzilla_pass(&mut self) {
+        if self.tick % Self::RAMPAGE_INTERVAL != 0 {
+            return;
+        }
+        let monsters: Vec<(usize, TilePos)> = self
+            .entities
+            .iter()
+            .enumerate()
+            .filter(|(_, entity)| entity.alive && entity.species.is_giant())
+            .map(|(index, entity)| (index, entity.pos))
+            .collect();
+        if monsters.is_empty() {
+            return;
+        }
+
+        for (monster_index, pos) in monsters {
+            let damage = self.entities[monster_index].attack_damage(26);
+
+            let victims: Vec<usize> = self
+                .entities
+                .iter()
+                .enumerate()
+                .filter(|(index, entity)| {
+                    *index != monster_index
+                        && entity.alive
+                        && !entity.species.is_giant()
+                        && entity.pos.distance(pos) <= 2.5
+                })
+                .map(|(index, _)| index)
+                .collect();
+            for victim in victims {
+                if self.hurt_entity(victim, damage) {
+                    let species = self.entities[victim].species;
+                    self.kill(victim, Some(Species::Godzilla));
+                    self.events.push(
+                        self.tick,
+                        EventKind::Combat,
+                        format!("Годзилла растоптал(а) {}", species.name_genitive_ru()),
+                    );
+                }
+            }
+
+            let targets: Vec<usize> = self
+                .buildings
+                .iter()
+                .enumerate()
+                .filter(|(_, building)| {
+                    building.pos.distance(pos) <= 2.5
+                        && building.kind.can_be_destroyed()
+                        && !building.is_destroyed()
+                })
+                .map(|(index, _)| index)
+                .collect();
+            for index in targets {
+                self.damage_building_cause(index, damage, "годзиллой");
+            }
+        }
+    }
+
+    /// Война бомб: страна, изучившая «Химию», изредка бросает динамит
+    /// в чужую столицу, а с «Атомом» может и жахнуть ядеркой.
+    ///
+    /// Ход делает только страна, которая воюет: союзников и нейтралов
+    /// бомбы не трогают.
+    fn bomb_pass(&mut self) {
+        if self.tick == 0 || self.tick % Self::BOMB_INTERVAL != 0 {
+            return;
+        }
+        let owners: Vec<(NationId, bool, bool)> = self
+            .nations
+            .iter()
+            .map(|nation| {
+                (
+                    nation.id,
+                    nation.knows(Tech::Chemistry),
+                    nation.knows(Tech::Atomic),
+                )
+            })
+            .collect();
+
+        for (id, chemistry, atomic) in owners {
+            if !chemistry || !self.rng.chance(0.25) {
+                continue;
+            }
+            let Some((enemy, target)) = self.enemy_capital(id) else {
+                continue;
+            };
+            let kind = if atomic && self.rng.chance(0.25) {
+                Explosive::Nuke
+            } else {
+                Explosive::Dynamite
+            };
+            let report = self.detonate(kind, target);
+            let name = self.nation_name(Some(id)).to_string();
+            let enemy_name = self.nation_name(Some(enemy)).to_string();
+            self.events.push(
+                self.tick,
+                EventKind::Combat,
+                format!(
+                    "{name}: {} по {enemy_name} — {}",
+                    kind.label_ru().to_lowercase(),
+                    report.summary_ru(kind)
+                ),
+            );
+        }
+    }
+
+    /// Столица страны, с которой идёт война.
+    fn enemy_capital(&self, me: NationId) -> Option<(NationId, TilePos)> {
+        self.nations
+            .iter()
+            .find(|other| other.id != me && self.diplomacy.at_war(me, other.id))
+            .map(|other| (other.id, other.capital))
+    }
+
     fn economy_pass(&mut self) {
         for index in 0..self.entities.len() {
             if !self.entities[index].alive {
@@ -1392,6 +1770,14 @@ impl Simulation {
             && self.entities[index].hunger < Entity::MAX_HUNGER
         {
             self.entities[index].hunger += 1;
+        }
+
+        // Регенерация: способность сама залечивает раны.
+        if self.entities[index].has(Ability::Regeneration) {
+            let max_hp = self.entities[index].max_hp();
+            if self.entities[index].hp < max_hp {
+                self.entities[index].hp = (self.entities[index].hp + 1).min(max_hp);
+            }
         }
 
         let starving = self.entities[index].hunger >= Entity::MAX_HUNGER;
@@ -1521,6 +1907,17 @@ impl Simulation {
                             self.tick,
                             EventKind::Build,
                             format!("{name}: порт готов, лодка спущена на воду"),
+                        );
+                    }
+                }
+                BuildingKind::Laboratory => {
+                    self.territory_dirty = true;
+                    if let Some(nation_id) = nation {
+                        let name = self.nation_name(Some(nation_id)).to_string();
+                        self.events.push(
+                            self.tick,
+                            EventKind::Build,
+                            format!("{name}: лаборатория готова — наука идёт быстрее"),
                         );
                     }
                 }
@@ -1743,10 +2140,10 @@ impl Simulation {
         } else {
             format!("{what} разрушен {cause}")
         };
-        let event = if cause == "в бою" {
-            EventKind::Combat
-        } else {
+        let event = if cause == "стихией" {
             EventKind::Weather
+        } else {
+            EventKind::Combat
         };
         self.events.push(self.tick, event, text);
         true
@@ -1855,6 +2252,7 @@ impl Simulation {
                 Species::Wolf => stats.wolves += 1,
                 Species::Zombie => stats.zombies += 1,
                 Species::Boat => stats.boats += 1,
+                Species::Godzilla => stats.godzillas += 1,
             }
         }
         for building in &self.buildings {
@@ -1863,12 +2261,13 @@ impl Simulation {
                 BuildingKind::Campfire => stats.campfires += 1,
                 BuildingKind::Ruin => stats.ruins += 1,
                 BuildingKind::Port if building.is_complete() => stats.ports += 1,
+                BuildingKind::Laboratory if building.is_complete() => stats.laboratories += 1,
                 _ => {}
             }
         }
 
         stats.population = stats.humans + stats.soldiers;
-        stats.monsters = stats.wolves + stats.zombies;
+        stats.monsters = stats.wolves + stats.zombies + stats.godzillas;
         stats.nations = self.nations.len() as u32;
         stats.wars = self.diplomacy.war_count();
         stats.alliances = self.diplomacy.alliance_count();
@@ -1876,6 +2275,13 @@ impl Simulation {
         stats.land_tiles = self.world.land_tiles();
         stats.snow_tiles = self.world.snow_tiles();
         stats.snow_fraction = self.world.snow_fraction();
+        stats.ore_tiles = self.world.ore_tiles();
+        stats.techs = self.nations.iter().map(|nation| crate::tech::count(nation.tech)).sum();
+        stats.abilities = self
+            .entities
+            .iter()
+            .filter(|entity| entity.alive && entity.abilities != 0)
+            .count() as u32;
         stats.tick = self.tick;
         self.stats = stats;
     }
@@ -2247,5 +2653,304 @@ mod tests {
                 assert!(sim.world.terrain(position).is_walkable());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod feature_tests {
+    use super::*;
+    use crate::grid::pos;
+    use crate::ore::{Ability, OreKind};
+
+    /// Остров суши для сценарных проверок.
+    fn island(seed: u64) -> Simulation {
+        let mut sim = Simulation::new(WorldSize::SMALL, seed);
+        sim.apply_tool(ToolConfig::new(Tool::Raise, 12), pos(60, 60));
+        sim
+    }
+
+    fn index_of(sim: &Simulation, id: EntityId) -> usize {
+        sim.entities.iter().position(|entity| entity.id == id).unwrap()
+    }
+
+    #[test]
+    fn ore_brush_places_deposits_and_shows_them_in_stats() {
+        let mut sim = island(41);
+        let spot = pos(60, 60);
+
+        let painted = sim.apply_tool(ToolConfig::new(Tool::OreRuby, 3), spot);
+        assert!(painted > 0, "кисть руды должна менять тайлы");
+        assert_eq!(sim.world.ore(spot), Some(OreKind::Ruby));
+        assert!(sim.world.ore_amount(spot) > 0);
+        assert!(sim.stats.ore_tiles > 0, "руда попадает в статистику");
+        assert!(
+            sim.events
+                .last()
+                .is_some_and(|event| event.kind == EventKind::Nature),
+            "залежь пишет в ленту событий"
+        );
+
+        // Осмотр пустой земли рассказывает про способность руды.
+        sim.apply_tool(ToolConfig::new(Tool::Inspect, 0), spot);
+        assert!(
+            sim.events
+                .last()
+                .is_some_and(|event| event.text.to_lowercase().contains("рубин")),
+            "осмотр руды поясняет её способность: {:?}",
+            sim.events.last().map(|event| event.text.clone())
+        );
+    }
+
+    #[test]
+    fn citizens_with_mining_dig_ore_for_research() {
+        let mut sim = island(42);
+        let spot = pos(60, 60);
+        sim.apply_tool(ToolConfig::new(Tool::OreCoal, 3), spot);
+
+        let nation = sim.found_nation_at(spot);
+        sim.nation_mut(nation).unwrap().learn(Tech::Mining);
+        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (-1, 0)] {
+            sim.spawn_in_nation(Species::Human, pos(60 + dx, 60 + dy), nation);
+        }
+        let before: u32 = (58..=62)
+            .flat_map(|y| (58..=62).map(move |x| (x, y)))
+            .map(|(x, y)| sim.world.ore_amount(pos(x, y)) as u32)
+            .sum();
+        let research_before = sim.nation(nation).unwrap().research;
+
+        sim.run(12);
+
+        let after: u32 = (58..=62)
+            .flat_map(|y| (58..=62).map(move |x| (x, y)))
+            .map(|(x, y)| sim.world.ore_amount(pos(x, y)) as u32)
+            .sum();
+        assert!(
+            after < before,
+            "жители с «Добычей» должны выкапывать залежь: {before} → {after}"
+        );
+        assert!(sim.nation(nation).unwrap().ore_mined > 0);
+        assert!(
+            sim.nation(nation).unwrap().research > research_before,
+            "добыча приносит очки науки"
+        );
+    }
+
+    #[test]
+    fn god_mode_ignores_damage_and_hits_harder() {
+        let mut sim = island(43);
+        let spot = pos(60, 60);
+        let id = sim.spawn(Species::Human, spot).unwrap();
+        let index = index_of(&sim, id);
+
+        {
+            let entity = sim.entity_mut(id).unwrap();
+            assert!(entity.grant(Ability::GodMode));
+            assert!(!entity.grant(Ability::GodMode), "способность выдаётся один раз");
+        }
+
+        let hp = sim.entities[index].hp;
+        assert!(!sim.hurt_entity(index, 500), "режим бога не убивается");
+        assert_eq!(sim.entities[index].hp, hp, "урон не проходит вовсе");
+        assert_eq!(sim.entities[index].attack_damage(10), 30);
+        assert!(sim
+            .entities[index]
+            .abilities_ru()
+            .to_lowercase()
+            .contains("режим бога"));
+        assert!(!sim.hurt_entity(index + 999, 10), "неверный индекс безопасен");
+    }
+
+    #[test]
+    fn immortality_holds_at_one_hp_and_regeneration_heals() {
+        let mut sim = island(44);
+        let spot = pos(60, 60);
+        let id = sim.spawn(Species::Human, spot).unwrap();
+        let index = index_of(&sim, id);
+        let max_hp = sim.entities[index].max_hp();
+
+        let entity = sim.entity_mut(id).unwrap();
+        entity.grant(Ability::Immortality);
+        assert!(entity.is_immortal());
+        assert!(!entity.is_invulnerable());
+
+        assert!(!sim.hurt_entity(index, 9_000), "бессмертный не умирает");
+        assert_eq!(sim.entities[index].hp, 1, "здоровье упирается в единицу");
+
+        // Регенерация возвращает здоровье в течение нескольких тиков.
+        sim.entity_mut(id).unwrap().grant(Ability::Regeneration);
+        sim.run(3);
+        assert!(
+            sim.entities[index].hp > 1 && sim.entities[index].hp <= max_hp,
+            "регенерация лечит: {}",
+            sim.entities[index].hp
+        );
+    }
+
+    #[test]
+    fn toughness_halves_incoming_damage() {
+        let mut sim = island(45);
+        let id = sim.spawn(Species::Human, pos(60, 60)).unwrap();
+        let index = index_of(&sim, id);
+        sim.entity_mut(id).unwrap().grant(Ability::Toughness);
+        let hp = sim.entities[index].hp;
+
+        sim.hurt_entity(index, 10);
+        assert_eq!(sim.entities[index].hp, hp - 5, "стойкость режет урон вдвое");
+    }
+
+    #[test]
+    fn nuke_burns_a_crater_and_kills_everything_inside() {
+        let mut sim = island(46);
+        let spot = pos(60, 60);
+        let nation = sim.found_nation_at(pos(62, 60));
+        sim.finish_house_for(nation, pos(61, 60));
+        let victim = sim.spawn(Species::Human, spot).unwrap();
+
+        let report = sim.detonate(Explosive::Nuke, spot);
+
+        assert!(report.craters > 0, "ядерка оставляет воронку");
+        assert!(report.buildings_ruined >= 1, "дом снесён");
+        assert!(report.entities_killed >= 1, "житель погиб");
+        assert!(
+            !sim.entity(victim).is_some_and(|entity| entity.is_alive()),
+            "житель погиб от ядерки"
+        );
+        assert!(
+            sim.events
+                .last()
+                .is_some_and(|event| event.kind == EventKind::Combat),
+            "взрыв пишет в ленту"
+        );
+        assert!(
+            !sim.buildings
+                .iter()
+                .any(|building| building.kind == BuildingKind::House),
+            "дом снесён: руины или воронка"
+        );
+    }
+
+    #[test]
+    fn dynamite_is_local_but_loud() {
+        let mut sim = island(47);
+        let spot = pos(60, 60);
+        let far = pos(60, 72);
+        let near = sim.spawn(Species::Human, spot).unwrap();
+        let distant = sim.spawn(Species::Human, far).unwrap();
+
+        let distant_hp = sim.entity(distant).unwrap().hp;
+        let report = sim.detonate(Explosive::Dynamite, spot);
+
+        assert!(report.tiles > 0);
+        assert!(report.entities_hurt >= 1, "динамит задевает ближнего");
+        let near_hp = sim.entity(near).map_or(0, |entity| entity.hp);
+        assert!(near_hp < 100, "динамит ранит вблизи: {near_hp}");
+        assert_eq!(
+            sim.entity(distant).map(|entity| entity.hp),
+            Some(distant_hp),
+            "далеко динамит не достаёт"
+        );
+    }
+
+    #[test]
+    fn godzilla_is_giant_and_smashes_houses() {
+        let mut sim = island(48);
+        let spot = pos(60, 60);
+        let nation = sim.found_nation_at(pos(63, 60));
+        let house = sim.finish_house_for(nation, pos(61, 60));
+        let id = sim.spawn(Species::Godzilla, spot).unwrap();
+
+        assert!(sim.entity(id).unwrap().species.is_giant());
+        assert_eq!(sim.stats.godzillas, 1);
+        assert!(sim.stats.monsters >= 1, "годзилла считается монстром");
+
+        let house_index = sim
+            .buildings
+            .iter()
+            .position(|building| building.id == house)
+            .unwrap();
+        let hp_before = sim.buildings[house_index].hp;
+
+        sim.tick = Simulation::RAMPAGE_INTERVAL;
+        sim.godzilla_pass();
+
+        assert!(
+            sim.buildings[house_index].hp < hp_before,
+            "годзилла ломает дом"
+        );
+    }
+
+    #[test]
+    fn research_unlocks_techs_one_by_one_and_builds_laboratory() {
+        let mut sim = island(49);
+        let nation = sim.found_nation_at(pos(60, 60));
+
+        let mining = sim.nation(nation).unwrap().next_tech();
+        assert_eq!(mining, Some(Tech::Mining), "первой идёт «Добыча»");
+
+        // Костёр даёт одно очко за шаг науки: «Добыча» стоит 30.
+        for _ in 0..30 {
+            sim.research_pass();
+        }
+        assert!(sim.nation(nation).unwrap().knows(Tech::Mining));
+        assert!(
+            !sim.nation(nation).unwrap().knows(Tech::Masonry),
+            "разработки открываются по одной"
+        );
+        assert_eq!(
+            sim.nation(nation).unwrap().next_tech(),
+            Some(Tech::Masonry),
+            "следующая — кладка"
+        );
+
+        for _ in 0..120 {
+            sim.research_pass();
+        }
+        assert!(sim.nation(nation).unwrap().knows(Tech::Masonry));
+        assert!(
+            sim.buildings
+                .iter()
+                .any(|building| building.kind == BuildingKind::Laboratory),
+            "после кладки страна строит лабораторию"
+        );
+        sim.refresh_stats();
+        assert_eq!(sim.stats.laboratories, 1);
+        assert!(sim.stats.techs >= 2);
+    }
+
+    #[test]
+    fn warring_nation_bombs_its_enemy_after_chemistry() {
+        let mut sim = island(51);
+        let left = sim.found_nation_at(pos(58, 60));
+        let right = sim.found_nation_at(pos(64, 60));
+        sim.finish_house_for(right, pos(65, 60));
+        sim.set_relation(left, right, Relation::War);
+        for tech in [Tech::Mining, Tech::Masonry, Tech::Chemistry, Tech::Atomic] {
+            sim.nation_mut(left).unwrap().learn(tech);
+        }
+        assert!(sim.nation(left).unwrap().knows(Tech::Chemistry));
+
+        for _ in 0..400 {
+            sim.tick = Simulation::BOMB_INTERVAL;
+            sim.bomb_pass();
+        }
+
+        let bombs = sim
+            .events
+            .iter()
+            .filter(|event| event.text.contains("динамит") || event.text.contains("ядерка"))
+            .count();
+        assert!(bombs > 0, "страна с химией должна бомбить врага");
+    }
+
+    #[test]
+    fn explosive_tools_are_wired_through_apply_tool() {
+        let mut sim = island(50);
+        let spot = pos(60, 60);
+        let changed = sim.apply_tool(ToolConfig::new(Tool::Dynamite, 4), spot);
+        assert!(changed > 0, "динамит меняет тайлы через кисть");
+        assert!(
+            sim.world.is_water(spot) || sim.world.ore(spot).is_none(),
+            "кратер выжигает залежь под собой"
+        );
     }
 }
