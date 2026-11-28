@@ -2010,21 +2010,32 @@ mod tests {
     fn hurricane_destroys_an_undefended_house() {
         let mut sim = island(22);
         let nation = sim.found_nation_at(pos(60, 60));
-        let house = sim.finish_house_for(nation, pos(63, 60));
+        let spot = pos(63, 60);
+        let house = sim.finish_house_for(nation, spot);
 
-        let before = sim.stats.houses;
-        assert_eq!(before, 1);
-        let report = sim.cast_weather(Weather::Hurricane, pos(63, 60), 3);
+        // Статистика пересчитывается в тике, поэтому дома считаем по списку.
+        let houses = |sim: &Simulation| {
+            sim.buildings
+                .iter()
+                .filter(|building| building.kind == BuildingKind::House && !building.is_destroyed())
+                .count()
+        };
+        assert_eq!(houses(&sim), 1);
+
+        let report = sim.cast_weather(Weather::Hurricane, spot, 3);
         assert!(report.buildings_hit > 0, "ураган должен задеть дом");
 
-        // Один удар ломает не всё: дом крепкий, но и не вечный.
+        // Один удар дом не ломает: он крепкий, но не вечный.
         let mut guard = 0;
-        while sim.stats.houses > 0 && guard < 40 {
-            sim.cast_weather(Weather::Hurricane, pos(63, 60), 3);
+        while houses(&sim) > 0 && guard < 40 {
+            sim.cast_weather(Weather::Hurricane, spot, 3);
             guard += 1;
         }
-        assert_eq!(sim.stats.houses, 0, "дом должен рухнуть");
-        assert!(sim.building(house).is_some_and(|building: &Building| building.is_destroyed()));
+        assert_eq!(houses(&sim), 0, "дом должен рухнуть");
+        assert!(
+            sim.building(house).is_some_and(|building: &Building| building.is_destroyed()),
+            "дом должен стать руинами"
+        );
         assert!(sim.stats.ruins > 0);
         assert!(
             sim.events

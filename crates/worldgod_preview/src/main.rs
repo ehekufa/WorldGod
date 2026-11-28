@@ -218,10 +218,17 @@ fn weather_scene(px: u32) -> Frame {
         }
     }
 
-    sim.cast_weather(Weather::Snowfall, center.offset(0, -20), 11);
-    sim.cast_weather(Weather::SolarFlare, center.offset(16, 4), 9);
-    sim.cast_weather(Weather::Rain, center.offset(-16, -10), 9);
-    sim.cast_weather(Weather::Hurricane, center.offset(0, 20), 10);
+    // Стихии бросаем по суше: снег на землю не ложится, а дождь и жара
+    // видны только там, где есть трава и лес.
+    let snow_center = land_near(&sim, center.offset(0, -16));
+    let sun_center = land_near(&sim, center.offset(14, -2));
+    let rain_center = land_near(&sim, center.offset(-16, -6));
+    let storm_center = land_near(&sim, center.offset(0, 16));
+
+    sim.cast_weather(Weather::Snowfall, snow_center, 10);
+    sim.cast_weather(Weather::SolarFlare, sun_center, 8);
+    sim.cast_weather(Weather::Rain, rain_center, 8);
+    sim.cast_weather(Weather::Hurricane, storm_center, 9);
 
     let _ = spawn_people(&mut sim, 4);
     for _ in 0..2 {
@@ -357,12 +364,13 @@ mod tests {
         build_island(&mut sim);
         let center = center_of(&sim);
 
-        sim.cast_weather(Weather::Snowfall, center.offset(0, -14), 9);
+        let snow_center = land_near(&sim, center.offset(0, -12));
+        sim.cast_weather(Weather::Snowfall, snow_center, 8);
         let snowy = sim.stats.snow_tiles;
         assert!(snowy > 0, "снегопад должен оставить снег");
 
-        sim.cast_weather(Weather::SolarFlare, center.offset(12, 4), 7);
-        sim.cast_weather(Weather::Hurricane, center.offset(0, 14), 7);
+        sim.cast_weather(Weather::SolarFlare, land_near(&sim, center.offset(10, 2)), 7);
+        sim.cast_weather(Weather::Hurricane, land_near(&sim, center.offset(0, 12)), 7);
         assert!(
             sim.events
                 .recent(20)

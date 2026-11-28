@@ -183,6 +183,11 @@ impl World {
         self.tile(p).map_or(0, |t| t.moisture)
     }
 
+    /// Снежный покров тайла; за границей карты — 0.
+    pub fn snow(&self, p: TilePos) -> u8 {
+        self.tile(p).map_or(0, |t| t.snow)
+    }
+
     /// Можно ли ходить по тайлу.
     pub fn is_walkable(&self, p: TilePos) -> bool {
         self.terrain(p).is_walkable()
