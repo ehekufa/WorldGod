@@ -51,7 +51,7 @@ if [ -n "$TARGET" ]; then
     note "Добавляю цель $TARGET"
     rustup target add "$TARGET"
     note "Сборка APK для $TARGET"
-    cargo apk build --release --target "$TARGET" --manifest-path "$MANIFEST"
+    cargo apk build --release --target "$TARGET" --manifest-path "$MANIFEST" || true
 else
     note "Сборка APK для всех ABI из [package.metadata.android].build_targets"
     while IFS= read -r line; do
@@ -63,11 +63,31 @@ else
                 ;;
         esac
     done < <(sed -n '/^build_targets/,/]/p' "$MANIFEST")
-    cargo apk build --release --manifest-path "$MANIFEST"
+    cargo apk build --release --manifest-path "$MANIFEST" || true
 fi
+
+# cargo-apk 0.10 умеет собрать и выровнять APK, но на подписи иногда падает,
+# оставляя готовый неподписанный файл. Поэтому после сборки проверяем подпись и
+# при необходимости подписываем сами тем же ключом через apksigner из SDK.
+sign_apk() {
+    local apk="$1"
+    local signer
+    signer="$(find "${ANDROID_HOME}/build-tools" -maxdepth 2 -name apksigner | sort -V | tail -n 1)"
+    [ -n "$signer" ] || fail "не найден apksigner в ${ANDROID_HOME}/build-tools"
+
+    if "$signer" verify "$apk" >/dev/null 2>&1; then
+        return 0
+    fi
+    note "APK не подписан — подписываю через apksigner"
+    "$signer" sign --ks "$CARGO_APK_RELEASE_KEYSTORE" \
+        --ks-pass "pass:$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" "$apk"
+    "$signer" verify --verbose "$apk" >/dev/null
+    note "Подпись проверена"
+}
 
 APK="$(find "$ROOT/target" -name '*.apk' -newermt '-10 minutes' | head -n 1 || true)"
 if [ -n "$APK" ]; then
+    sign_apk "$APK"
     note "Готово: $APK"
     printf 'Установка на устройство: adb install -r %s\n' "$APK"
 else

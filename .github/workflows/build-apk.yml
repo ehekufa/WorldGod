@@ -152,11 +152,11 @@ jobs:
           retention-days: 7
           path: build-log.txt
 
-      - name: Подписать APK вручную (если cargo-apk не смог)
-        # cargo-apk успевает собрать и выровнять APK и падает уже на подписи.
-        # Файл к этому моменту лежит на месте, поэтому подписываем его тем же
-        # ключом напрямую — через apksigner из Android SDK.
-        if: steps.build.outcome == 'failure'
+      - name: Подписать APK (apksigner)
+        # Штатно APK подписывает сам cargo-apk, но на подписи он периодически
+        # паникует, уже отдав готовый выровненный файл. Поэтому подпись всегда
+        # проверяется, а при необходимости ставится напрямую тем же ключом.
+        if: always()
         run: |
           APK="$(ls target/release/apk/*.apk 2>/dev/null | head -n 1)"
           if [ -z "$APK" ]; then
@@ -311,11 +311,11 @@ jobs:
           retention-days: 7
           path: build-log-arm64.txt
 
-      - name: Подписать APK вручную (если cargo-apk не смог)
-        # cargo-apk успевает собрать и выровнять APK и падает уже на подписи.
-        # Файл к этому моменту лежит на месте, поэтому подписываем его тем же
-        # ключом напрямую — через apksigner из Android SDK.
-        if: steps.build.outcome == 'failure'
+      - name: Подписать APK (apksigner)
+        # Штатно APK подписывает сам cargo-apk, но на подписи он периодически
+        # паникует, уже отдав готовый выровненный файл. Поэтому подпись всегда
+        # проверяется, а при необходимости ставится напрямую тем же ключом.
+        if: always()
         run: |
           APK="$(ls target/release/apk/*.apk 2>/dev/null | head -n 1)"
           if [ -z "$APK" ]; then
