@@ -238,7 +238,7 @@ pub fn paint(
                     if matches!(tile.terrain(), Terrain::Forest) {
                         report.forest_lost += 1;
                     }
-                    tile.moisture = tile.moisture.saturating_sub((170.0 * strength) as u8);
+                    tile.moisture = tile.moisture.saturating_sub((230.0 * strength) as u8);
                 }
                 // Снег мгновенно тает.
                 if snow_before > 0 {

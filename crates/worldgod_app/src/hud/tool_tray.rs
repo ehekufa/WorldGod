@@ -2,7 +2,7 @@
 
 use eframe::egui;
 use egui::{RichText, Ui};
-use worldgod_core::{ToolCategory, ToolConfig};
+use worldgod_core::{Tool, ToolCategory, ToolConfig};
 
 use crate::hud::widgets;
 use crate::state::AppState;
@@ -86,7 +86,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use worldgod_core::{Tool, WorldSize};
+    use worldgod_core::WorldSize;
 
     #[test]
     fn tray_renders_for_every_category() {
