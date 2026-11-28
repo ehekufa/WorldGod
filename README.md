@@ -225,6 +225,11 @@ cargo run --release -p worldgod_preview -- --out docs --px 4
 запускается и на телефоне, и на эмуляторе. Для pull request дополнительно собирается
 быстрая arm64-версия.
 
+`cargo-apk` не собирает release-сборку без ключа, поэтому workflow генерирует
+одноразовый ключ `keytool` прямо в запуске и передаёт его через
+`CARGO_APK_RELEASE_KEYSTORE` / `CARGO_APK_RELEASE_KEYSTORE_PASSWORD`. В репозитории
+секретов нет; для публикации в магазине подставьте свой ключ этими же переменными.
+
 Установка:
 
 ```bash
@@ -247,6 +252,10 @@ scripts/build_android.sh aarch64-linux-android    # только arm64 — бы�
 APK появится в `target/release/apk/`. Параметры упаковки (имя пакета, SDK, иконка, тема)
 описаны прямо в `crates/worldgod_app/Cargo.toml` в секциях
 `[package.metadata.android]` — отдельный `AndroidManifest.xml` и Gradle-проект не нужны.
+
+Скрипт сам создаёт одноразовый ключ подписи `target/worldgod-dev.keystore` (пароль
+`worldgod`), если переменные `CARGO_APK_RELEASE_KEYSTORE*` не заданы. Для установки
+на свой телефон этого достаточно; ключ в git не попадает.
 
 ---
 

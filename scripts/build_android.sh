@@ -23,6 +23,29 @@ command -v cargo-apk >/dev/null || fail "не найден cargo-apk — вып�
 [ -n "${ANDROID_HOME:-}" ] || fail "не задан ANDROID_HOME (путь к Android SDK)"
 [ -n "${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}" ] || fail "не задан ANDROID_NDK_HOME (путь к Android NDK)"
 
+# cargo-apk требует ключ для `--release`. В CI он одноразовый, локально
+# создаём dev-ключ в target/ (в git он не попадает) и переиспользуем.
+ensure_release_key() {
+    if [ -n "${CARGO_APK_RELEASE_KEYSTORE:-}" ]; then
+        return 0
+    fi
+    local keystore="$ROOT/target/worldgod-dev.keystore"
+    if [ ! -f "$keystore" ]; then
+        command -v keytool >/dev/null || fail "не найден keytool (JDK) — он нужен для ключа подписи"
+        note "Создаю dev-ключ подписи: $keystore"
+        mkdir -p "$(dirname "$keystore")"
+        keytool -genkeypair -noprompt \
+            -keystore "$keystore" -storetype PKCS12 \
+            -storepass worldgod -keypass worldgod \
+            -alias worldgod -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=WorldGod dev, O=WorldGod, C=RU" >/dev/null
+    fi
+    export CARGO_APK_RELEASE_KEYSTORE="$keystore"
+    export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=worldgod
+}
+
+ensure_release_key
+
 TARGET="${1:-}"
 if [ -n "$TARGET" ]; then
     note "Добавляю цель $TARGET"

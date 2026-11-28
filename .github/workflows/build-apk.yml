@@ -44,6 +44,21 @@ jobs:
         with:
           packages: "platform-tools build-tools;35.0.0 platforms;android-35"
 
+      - name: Ключ для подписи release-APK
+        # cargo-apk отказывается собирать `--release` без ключа. Ключ
+        # одноразовый и живёт только внутри запуска, поэтому в репозиторий
+        # ничего не коммитится: путь и пароль передаются переменными
+        # окружения CARGO_APK_RELEASE_KEYSTORE / ..._PASSWORD.
+        run: |
+          keytool -genkeypair -noprompt \
+            -keystore "$RUNNER_TEMP/worldgod.keystore" \
+            -storetype PKCS12 -storepass worldgod -keypass worldgod \
+            -alias worldgod -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=WorldGod CI, O=WorldGod, C=RU"
+          echo "CARGO_APK_RELEASE_KEYSTORE=$RUNNER_TEMP/worldgod.keystore" >> "$GITHUB_ENV"
+          echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=worldgod" >> "$GITHUB_ENV"
+
+
       - name: Android NDK
         id: ndk
         uses: nttld/setup-ndk@v1
@@ -149,6 +164,16 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: "platform-tools build-tools;35.0.0 platforms;android-35"
+
+      - name: Ключ для подписи release-APK
+        run: |
+          keytool -genkeypair -noprompt \
+            -keystore "$RUNNER_TEMP/worldgod.keystore" \
+            -storetype PKCS12 -storepass worldgod -keypass worldgod \
+            -alias worldgod -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=WorldGod CI, O=WorldGod, C=RU"
+          echo "CARGO_APK_RELEASE_KEYSTORE=$RUNNER_TEMP/worldgod.keystore" >> "$GITHUB_ENV"
+          echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=worldgod" >> "$GITHUB_ENV"
 
       - id: ndk
         uses: nttld/setup-ndk@v1
