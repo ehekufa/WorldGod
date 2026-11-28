@@ -121,7 +121,7 @@ jobs:
           # туда одной длинной аннотацией.
           tail_text = "\n".join(lines[-120:])
           escaped = (
-              tail_text[-20000:]
+              tail_text[-3000:]
               .replace("%", "%25")
               .replace("\r", "%0D")
               .replace("\n", "%0A")
@@ -134,8 +134,8 @@ jobs:
           # поэтому даже без доступа к логам Actions видно всю картину.
           import base64, gzip
           blob = base64.b64encode(gzip.compress(raw)).decode()
-          for i in range(0, min(len(blob), 440_000), 55_000):
-              print(f"::error title=apk-log {i//55000 + 1}::" + blob[i:i+55_000])
+          for i in range(0, min(len(blob), 34_200), 3_800):
+              print(f"::error title=apk-log {i//3800 + 1}::" + blob[i:i+3_800])
           EOF
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
@@ -152,16 +152,43 @@ jobs:
           retention-days: 7
           path: build-log.txt
 
+      - name: Подписать APK вручную (если cargo-apk не смог)
+        # cargo-apk успевает собрать и выровнять APK и падает уже на подписи.
+        # Файл к этому моменту лежит на месте, поэтому подписываем его тем же
+        # ключом напрямую — через apksigner из Android SDK.
+        if: steps.build.outcome == 'failure'
+        run: |
+          APK="$(ls target/release/apk/*.apk 2>/dev/null | head -n 1)"
+          if [ -z "$APK" ]; then
+            echo "APK не собран — подписывать нечего"
+            exit 0
+          fi
+          SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          if "$SIGNER" verify "$APK" > /dev/null 2>&1; then
+            echo "APK уже подписан"
+            exit 0
+          fi
+          "$SIGNER" sign --ks "$CARGO_APK_RELEASE_KEYSTORE" \
+            --ks-pass "pass:$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" "$APK"
+          "$SIGNER" verify --verbose "$APK"
+
       - name: Итог сборки
         if: steps.build.outcome == 'failure'
         run: |
-          echo "Сборка APK не удалась — подробности в артефакте build-log и в комментарии к коммиту."
+          APK="$(ls target/release/apk/*.apk 2>/dev/null | head -n 1)"
+          SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          if [ -n "$APK" ] && "$SIGNER" verify "$APK" > /dev/null 2>&1; then
+            echo "APK собран и подписан, хотя cargo-apk вернул ошибку — см. build-log."
+            exit 0
+          fi
+          echo "Сборка APK не удалась — подробности в артефакте build-log и в аннотациях."
           exit 1
 
       - name: Список собранных файлов
         run: find target -name '*.apk' -printf '%p — %s байт\n'
 
       - name: Загрузить APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: worldgod-apk
@@ -253,7 +280,7 @@ jobs:
           # туда одной длинной аннотацией.
           tail_text = "\n".join(lines[-120:])
           escaped = (
-              tail_text[-20000:]
+              tail_text[-3000:]
               .replace("%", "%25")
               .replace("\r", "%0D")
               .replace("\n", "%0A")
@@ -266,8 +293,8 @@ jobs:
           # поэтому даже без доступа к логам Actions видно всю картину.
           import base64, gzip
           blob = base64.b64encode(gzip.compress(raw)).decode()
-          for i in range(0, min(len(blob), 440_000), 55_000):
-              print(f"::error title=apk-arm64-log {i//55000 + 1}::" + blob[i:i+55_000])
+          for i in range(0, min(len(blob), 34_200), 3_800):
+              print(f"::error title=apk-arm64-log {i//3800 + 1}::" + blob[i:i+3_800])
           EOF
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh api -X POST \
@@ -284,14 +311,40 @@ jobs:
           retention-days: 7
           path: build-log-arm64.txt
 
+      - name: Подписать APK вручную (если cargo-apk не смог)
+        # cargo-apk успевает собрать и выровнять APK и падает уже на подписи.
+        # Файл к этому моменту лежит на месте, поэтому подписываем его тем же
+        # ключом напрямую — через apksigner из Android SDK.
+        if: steps.build.outcome == 'failure'
+        run: |
+          APK="$(ls target/release/apk/*.apk 2>/dev/null | head -n 1)"
+          if [ -z "$APK" ]; then
+            echo "APK не собран — подписывать нечего"
+            exit 0
+          fi
+          SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          if "$SIGNER" verify "$APK" > /dev/null 2>&1; then
+            echo "APK уже подписан"
+            exit 0
+          fi
+          "$SIGNER" sign --ks "$CARGO_APK_RELEASE_KEYSTORE" \
+            --ks-pass "pass:$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" "$APK"
+          "$SIGNER" verify --verbose "$APK"
+
       - name: Итог сборки
         if: steps.build.outcome == 'failure'
         run: |
-          echo "Сборка APK (arm64) не удалась — подробности в артефакте build-log-arm64."
+          APK="$(ls target/release/apk/*.apk 2>/dev/null | head -n 1)"
+          SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          if [ -n "$APK" ] && "$SIGNER" verify "$APK" > /dev/null 2>&1; then
+            echo "APK собран и подписан, хотя cargo-apk вернул ошибку — см. build-log."
+            exit 0
+          fi
+          echo "Сборка APK не удалась — подробности в артефакте build-log и в аннотациях."
           exit 1
 
       - uses: actions/upload-artifact@v4
-        if: steps.build.outcome == 'success'
+        if: always()
         with:
           name: worldgod-apk-arm64
           if-no-files-found: error
