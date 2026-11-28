@@ -33,6 +33,16 @@ pub const SUCCESS: Color32 = Color32::from_rgb(124, 210, 134);
 /// Предупреждение / золото.
 pub const WARNING: Color32 = Color32::from_rgb(240, 190, 92);
 
+/// Снежный покров и «зимние» стихии.
+pub const SNOW: Color32 = Color32::from_rgb(226, 238, 250);
+
+/// Цвета стихий: ураган, вспышка солнца, дождь, снегопад.
+pub const STORM: Color32 = Color32::from_rgb(146, 198, 226);
+/// Цвет вспышки солнца.
+pub const SUNBURST: Color32 = Color32::from_rgb(255, 188, 92);
+/// Цвет дождя.
+pub const RAIN: Color32 = Color32::from_rgb(112, 162, 220);
+
 /// Скругление углов кнопок и карточек.
 pub const RADIUS: u8 = 12;
 

@@ -13,8 +13,13 @@
 //! * [`Simulation`] — владелец мира, жителей, построек, стран и журнала событий.
 //!   Шаг симуляции — [`Simulation::step`], 10 тиков в секунду ([`SIM_HZ`]).
 //! * [`brush`] — инструменты игрока: поднять сушу, опустить в воду, вырастить
-//!   лес, насыпать пляж, поднять горы, заселить мир существами и объявить
-//!   войну или союз между странами.
+//!   лес, насыпать пляж, поднять горы, заселить мир существами, объявить
+//!   войну или союз между странами и обрушить стихию. Инструменты разложены
+//!   по категориям ([`ToolCategory`]): рельеф, жизнь, стихии, прочее.
+//! * [`weather`] — стихии: ураган, вспышка солнца, дождь, снегопад. Снег
+//!   хранится отдельным слоем тайла и тает сам, остальные стихии меняют
+//!   влажность и высоту, а по постройкам и существам бьют через
+//!   [`Simulation::cast_weather`].
 //! * [`nation`] — страны и таблица дипломатии: у каждой пары стран есть
 //!   статус «мир», «союз» или «война»; на войне воины идут на чужую землю,
 //!   а в союзе защищают жителей союзника от монстров.
@@ -63,9 +68,10 @@ pub mod rng;
 pub mod sim;
 pub mod species;
 pub mod terrain;
+pub mod weather;
 pub mod world;
 
-pub use brush::{Tool, ToolConfig};
+pub use brush::{Tool, ToolCategory, ToolConfig};
 pub use building::{Building, BuildingId, BuildingKind};
 pub use camera::ViewTransform;
 pub use entity::{Entity, EntityId, Intent};
@@ -77,6 +83,7 @@ pub use rng::Rng;
 pub use sim::{Simulation, Speed, Stats, WorldSize, SIM_HZ};
 pub use species::Species;
 pub use terrain::{Terrain, SEA_LEVEL};
+pub use weather::{Weather, WeatherReport};
 pub use world::{Tile, World};
 
 /// Версия симуляции: увеличивается при несовместимых изменениях формата мира.

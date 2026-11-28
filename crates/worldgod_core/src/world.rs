@@ -16,6 +16,11 @@ pub struct Tile {
     pub moisture: u8,
     /// Декоративный вариант (0..3), чтобы трава и песок не выглядели одинаково.
     pub variant: u8,
+    /// Снежный покров 0..255 — погодный слой поверх рельефа.
+    ///
+    /// Снег не меняет тип рельефа: он тает со временем, замедляет ходьбу
+    /// и просто подкрашивает тайл в рендере.
+    pub snow: u8,
 }
 
 impl Tile {
@@ -32,6 +37,16 @@ impl Tile {
     /// Это суша?
     pub fn is_land(&self) -> bool {
         self.terrain().is_land()
+    }
+
+    /// Доля снежного покрова 0.0..=1.0.
+    pub fn snow_fraction(&self) -> f32 {
+        self.snow as f32 / 255.0
+    }
+
+    /// Тайл заметно замедлен снегом?
+    pub fn is_snowy(&self) -> bool {
+        self.snow >= 120
     }
 }
 
@@ -71,6 +86,7 @@ impl World {
                     elevation: elevation.min(SEA_LEVEL - 25),
                     moisture,
                     variant: (rng.next_u32() % 4) as u8,
+                    snow: 0,
                 });
             }
         }
@@ -167,6 +183,11 @@ impl World {
         self.tile(p).map_or(0, |t| t.moisture)
     }
 
+    /// Снежный покров тайла; за границей карты — 0.
+    pub fn snow(&self, p: TilePos) -> u8 {
+        self.tile(p).map_or(0, |t| t.snow)
+    }
+
     /// Можно ли ходить по тайлу.
     pub fn is_walkable(&self, p: TilePos) -> bool {
         self.terrain(p).is_walkable()
@@ -203,6 +224,66 @@ impl World {
             counts.add(tile.terrain());
         }
         counts
+    }
+
+    /// Устанавливает снежный покров тайла. Возвращает `true`, если что-то изменилось.
+    pub fn set_snow(&mut self, p: TilePos, snow: u8) -> bool {
+        let Some(index) = self.index(p) else {
+            return false;
+        };
+        if self.tiles[index].snow == snow {
+            return false;
+        }
+        self.tiles[index].snow = snow;
+        self.bump_revision();
+        true
+    }
+
+    /// Добавляет снег (может быть отрицательным — снег тает).
+    /// Возвращает новый покров.
+    pub fn add_snow(&mut self, p: TilePos, amount: i32) -> u8 {
+        let current = self.snow(p) as i32;
+        let next = (current + amount).clamp(0, 255) as u8;
+        self.set_snow(p, next);
+        next
+    }
+
+    /// Сколько тайлов под снегом.
+    pub fn snow_tiles(&self) -> u32 {
+        self.tiles.iter().filter(|tile| tile.snow > 0).count() as u32
+    }
+
+    /// Средний снежный покров по карте 0.0..=1.0 (для сводки).
+    pub fn snow_fraction(&self) -> f32 {
+        if self.tiles.is_empty() {
+            return 0.0;
+        }
+        let total: u32 = self.tiles.iter().map(|tile| tile.snow as u32).sum();
+        total as f32 / (self.tiles.len() as f32 * 255.0)
+    }
+
+    /// Таяние: снимает `amount` снега со всех тайлов.
+    /// Возвращает число тайлов, где снег растаял полностью.
+    pub fn melt_snow(&mut self, amount: u8) -> u32 {
+        if amount == 0 {
+            return 0;
+        }
+        let mut melted = 0;
+        let mut touched = false;
+        for tile in &mut self.tiles {
+            if tile.snow == 0 {
+                continue;
+            }
+            tile.snow = tile.snow.saturating_sub(amount);
+            if tile.snow == 0 {
+                melted += 1;
+            }
+            touched = true;
+        }
+        if touched {
+            self.bump_revision();
+        }
+        melted
     }
 
     /// Устанавливает высоту тайла. Возвращает `true`, если что-то изменилось.
@@ -381,6 +462,7 @@ impl World {
             elevation,
             moisture,
             variant: old.variant,
+            snow: old.snow,
         };
         let is_land = self.tiles[index].terrain().is_land();
         match (was_land, is_land) {

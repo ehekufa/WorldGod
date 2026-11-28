@@ -90,6 +90,36 @@ pub fn icon_button(
     response
 }
 
+/// Вкладка категории инструментов в лотке.
+pub fn category_tab(ui: &mut Ui, label: &str, selected: bool) -> Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        FontId::proportional(11.5),
+        if selected { theme::ACCENT } else { theme::TEXT_DIM },
+    );
+    let size = egui::vec2(galley.size().x + 18.0, 23.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+
+    let background = if selected {
+        theme::ACCENT_DARK
+    } else if response.hovered() {
+        theme::SURFACE_HOVER
+    } else {
+        theme::SURFACE_ALT
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(theme::RADIUS - 4), background);
+    painter.galley(
+        egui::pos2(
+            rect.center().x - galley.size().x / 2.0,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        if selected { theme::ACCENT } else { theme::TEXT_DIM },
+    );
+    response
+}
+
 /// Кнопка инструмента: иконка + подпись.
 pub fn tool_button(ui: &mut Ui, tool: Tool, selected: bool) -> Response {
     tool_button_sized(ui, tool, selected, 50.0, 58.0)

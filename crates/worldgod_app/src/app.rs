@@ -109,7 +109,8 @@ fn handle_shortcuts(ctx: &egui::Context, state: &mut AppState) {
     for (index, key) in KEYS.iter().enumerate() {
         if pressed(*key) {
             if let Some(tool) = Tool::ALL.get(index) {
-                state.tool.tool = *tool;
+                // Горячие клавиши открывают вкладку выбранной кисти.
+                state.select_tool(*tool);
             }
         }
     }

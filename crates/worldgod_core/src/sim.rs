@@ -15,6 +15,7 @@ use crate::nation::{Diplomacy, Nation, NationId, Relation, NATION_PALETTE};
 use crate::pathfind::{greedy_step, PathFinder};
 use crate::rng::Rng;
 use crate::species::Species;
+use crate::weather::{Weather, WeatherReport};
 use crate::world::World;
 
 /// Частота симуляции: 10 тиков в секунду реального времени.
@@ -163,6 +164,10 @@ pub struct Stats {
     pub alliances: u32,
     /// Стран.
     pub nations: u32,
+    /// Тайлов под снегом.
+    pub snow_tiles: u32,
+    /// Средний снежный покров по карте 0.0..=1.0.
+    pub snow_fraction: f32,
     /// Доля суши 0.0..=1.0.
     pub land_fraction: f32,
     /// Тайлов суши.
@@ -240,6 +245,12 @@ impl Simulation {
 
     /// Сколько тиков между попытками рождения жителей.
     const BIRTH_INTERVAL: u64 = 60;
+
+    /// Сколько тиков между шагами таяния снега.
+    const SNOW_MELT_INTERVAL: u64 = 25;
+
+    /// Сколько снега сходит за один шаг таяния.
+    const SNOW_MELT_STEP: u8 = 3;
 
     /// Создаёт мир-океан без единого клочка суши.
     pub fn new(size: WorldSize, seed: u64) -> Self {
@@ -964,8 +975,12 @@ impl Simulation {
     // ---------------------------------------------------------------- кисть
 
     /// Применяет инструмент игрока. Возвращает число изменённых тайлов
-    /// (для кистей рельефа) или число появившихся существ.
+    /// (для кистей рельефа и стихий) или число появившихся существ.
     pub fn apply_tool(&mut self, config: ToolConfig, center: TilePos) -> u32 {
+        if let Some(kind) = config.tool.weather() {
+            return self.cast_weather(kind, center, config.clamped_radius()).tiles;
+        }
+
         if config.tool.is_terrain() {
             let changed = brush::paint(&mut self.world, config, center, &mut self.rng);
             if changed > 0 {
@@ -1000,6 +1015,100 @@ impl Simulation {
                 }
                 spawned
             }
+        }
+    }
+
+    /// Обрушивает стихию: меняет тайлы, бьёт по постройкам и существам
+    /// и пишет итог в ленту событий.
+    ///
+    /// Радиус — тот же, что у кисти рельефа. Ураган и вспышка солнца
+    /// считаются «злыми»: они ломают дома, порты и костры ([`Weather::is_extreme`]).
+    pub fn cast_weather(&mut self, kind: Weather, center: TilePos, radius: i32) -> WeatherReport {
+        let radius = radius.clamp(0, 64);
+        let mut report = crate::weather::paint(&mut self.world, kind, center, radius, &mut self.rng);
+
+        if kind.is_extreme() {
+            self.weather_hits_buildings(kind, center, radius, &mut report);
+            self.weather_hits_entities(kind, center, radius, &mut report);
+        }
+
+        self.after_terrain_change();
+
+        if report.tiles > 0 || report.buildings_hit > 0 || report.entities_hurt > 0 {
+            self.events
+                .push(self.tick, EventKind::Weather, report.summary_ru(kind));
+        }
+        report
+    }
+
+    /// Стихия ломает постройки в круге.
+    fn weather_hits_buildings(
+        &mut self,
+        kind: Weather,
+        center: TilePos,
+        radius: i32,
+        report: &mut WeatherReport,
+    ) {
+        let damage = kind.building_damage();
+        if damage <= 0 {
+            return;
+        }
+        let targets: Vec<usize> = self
+            .buildings
+            .iter()
+            .enumerate()
+            .filter(|(_, building)| {
+                building.pos.distance(center) <= radius as f32 + 0.5
+                    && building.kind.can_be_destroyed()
+                    && !building.is_destroyed()
+            })
+            .map(|(index, _)| index)
+            .collect();
+
+        for index in targets {
+            report.buildings_hit += 1;
+            if self.damage_building_cause(index, damage, "стихией") {
+                report.buildings_ruined += 1;
+            }
+        }
+    }
+
+    /// Стихия бьёт по существам в круге. Лодки и зомби от бури тоже страдают.
+    fn weather_hits_entities(
+        &mut self,
+        kind: Weather,
+        center: TilePos,
+        radius: i32,
+        report: &mut WeatherReport,
+    ) {
+        let damage = kind.entity_damage();
+        if damage <= 0 {
+            return;
+        }
+        let targets: Vec<usize> = self
+            .entities
+            .iter()
+            .enumerate()
+            .filter(|(_, entity)| {
+                entity.alive && entity.pos.distance(center) <= radius as f32 + 0.5
+            })
+            .map(|(index, _)| index)
+            .collect();
+
+        for index in targets {
+            report.entities_hurt += 1;
+            self.entities[index].hp -= damage;
+            if self.entities[index].hp > 0 {
+                continue;
+            }
+            let species = self.entities[index].species;
+            self.kill(index, None);
+            report.entities_killed += 1;
+            self.events.push(
+                self.tick,
+                EventKind::Weather,
+                format!("{} не пережил(а) {}", species.name_ru(), kind.name_ru().to_lowercase()),
+            );
         }
     }
 
@@ -1094,6 +1203,11 @@ impl Simulation {
             self.try_births();
         }
 
+        // Снег тает сам: мир не остаётся белым навсегда.
+        if self.tick % Self::SNOW_MELT_INTERVAL == 0 {
+            self.world.melt_snow(Self::SNOW_MELT_STEP);
+        }
+
         if self.territory_dirty {
             self.rebuild_territory();
         }
@@ -1118,17 +1232,13 @@ impl Simulation {
     }
 
     fn move_entity(&mut self, index: usize) {
-        let (pos, intent, move_interval, attack_range, species) = {
+        let (pos, intent, attack_range, species) = {
             let entity = &self.entities[index];
             let stats = entity.stats();
-            (
-                entity.pos,
-                entity.intent,
-                stats.move_interval,
-                stats.attack_range,
-                entity.species,
-            )
+            (entity.pos, entity.intent, stats.attack_range, entity.species)
         };
+        // Снег замедляет всех, кроме лодок.
+        let move_interval = self.move_interval_for(species, pos);
 
         // Куда идём.
         let goal = match intent {
@@ -1214,6 +1324,25 @@ impl Simulation {
             // Застряли: сбрасываем путь и попробуем позже.
             self.entities[index].path.clear();
             self.entities[index].move_timer = move_interval;
+        }
+    }
+
+    /// Сколько тиков существо ждёт между шагами на этом тайле.
+    ///
+    /// Снег — не рельеф, поэтому он не блокирует путь, а только замедляет:
+    /// сугроб добавляет пару тиков к шагу.
+    pub fn move_interval_for(&self, species: Species, pos: TilePos) -> u16 {
+        let base = species.stats().move_interval;
+        if species.is_water_unit() {
+            return base;
+        }
+        let snow = self.world.snow(pos);
+        if snow >= 200 {
+            base.saturating_add(3)
+        } else if snow >= 120 {
+            base.saturating_add(2)
+        } else {
+            base
         }
     }
 
@@ -1586,6 +1715,14 @@ impl Simulation {
 
     /// Наносит урон постройке. Возвращает `true`, если она только что рухнула.
     pub fn damage_building(&mut self, index: usize, amount: i32) -> bool {
+        self.damage_building_cause(index, amount, "в бою")
+    }
+
+    /// Наносит постройке урон с указанием причины («в бою», «стихией»).
+    ///
+    /// Разрушенная постройка превращается в руины и теряет территорию —
+    /// поэтому после любого разрушения пересчитываются занятые клетки.
+    pub fn damage_building_cause(&mut self, index: usize, amount: i32, cause: &str) -> bool {
         if index >= self.buildings.len() {
             return false;
         }
@@ -1602,11 +1739,16 @@ impl Simulation {
         let owner = self.nation_name(nation).to_string();
         let what = kind.name_ru().to_lowercase();
         let text = if nation.is_some() {
-            format!("{owner}: {what} разрушен в бою")
+            format!("{owner}: {what} разрушен {cause}")
         } else {
-            format!("{what} разрушен в бою")
+            format!("{what} разрушен {cause}")
         };
-        self.events.push(self.tick, EventKind::Combat, text);
+        let event = if cause == "в бою" {
+            EventKind::Combat
+        } else {
+            EventKind::Weather
+        };
+        self.events.push(self.tick, event, text);
         true
     }
 
@@ -1732,6 +1874,8 @@ impl Simulation {
         stats.alliances = self.diplomacy.alliance_count();
         stats.land_fraction = self.world.land_fraction();
         stats.land_tiles = self.world.land_tiles();
+        stats.snow_tiles = self.world.snow_tiles();
+        stats.snow_fraction = self.world.snow_fraction();
         stats.tick = self.tick;
         self.stats = stats;
     }
@@ -1828,6 +1972,120 @@ mod tests {
         sim.apply_tool(ToolConfig::new(Tool::Raise, 10), pos(70, 66));
         sim.apply_tool(ToolConfig::new(Tool::Forest, 6), pos(64, 62));
         sim
+    }
+
+    #[test]
+    fn snowfall_adds_snow_and_slows_walkers() {
+        let mut sim = island(21);
+        let spot = pos(60, 60);
+        assert_eq!(sim.world.snow(spot), 0);
+
+        let report = sim.cast_weather(Weather::Snowfall, spot, 4);
+        assert!(report.snow_added > 0);
+        assert!(sim.world.snow(spot) > 100);
+        assert!(sim.stats.snow_tiles > 0, "снег попал в статистику");
+        assert!(
+            sim.events.last().is_some_and(|event| event.kind == EventKind::Weather),
+            "стихия пишет в ленту событий"
+        );
+
+        // Снег замедляет пешеходов, но не лодок.
+        let slow = sim.move_interval_for(Species::Human, spot);
+        let base = Species::Human.stats().move_interval;
+        assert!(slow > base, "снег должен замедлять: {slow} против {base}");
+        assert_eq!(sim.move_interval_for(Species::Boat, spot), Species::Boat.stats().move_interval);
+
+        // И тает сам по себе.
+        let snow_before = sim.world.snow(spot);
+        sim.run(Simulation::SNOW_MELT_INTERVAL as u32 * 3);
+        assert!(
+            sim.world.snow(spot) < snow_before,
+            "снег должен таять: {} → {}",
+            snow_before,
+            sim.world.snow(spot)
+        );
+    }
+
+    #[test]
+    fn hurricane_destroys_an_undefended_house() {
+        let mut sim = island(22);
+        let nation = sim.found_nation_at(pos(60, 60));
+        let spot = pos(63, 60);
+        let house = sim.finish_house_for(nation, spot);
+
+        // Статистика пересчитывается в тике, поэтому дома считаем по списку.
+        let houses = |sim: &Simulation| {
+            sim.buildings
+                .iter()
+                .filter(|building| building.kind == BuildingKind::House && !building.is_destroyed())
+                .count()
+        };
+        assert_eq!(houses(&sim), 1);
+
+        let report = sim.cast_weather(Weather::Hurricane, spot, 3);
+        assert!(report.buildings_hit > 0, "ураган должен задеть дом");
+
+        // Один удар дом не ломает: он крепкий, но не вечный.
+        let mut guard = 0;
+        while houses(&sim) > 0 && guard < 40 {
+            sim.cast_weather(Weather::Hurricane, spot, 3);
+            guard += 1;
+        }
+        assert_eq!(houses(&sim), 0, "дом должен рухнуть");
+        assert!(
+            sim.building(house).is_some_and(|building: &Building| building.is_destroyed()),
+            "дом должен стать руинами"
+        );
+        assert!(sim.stats.ruins > 0);
+        assert!(
+            sim.events
+                .recent(40)
+                .any(|event| event.text.contains("разрушен стихией")),
+            "в ленте есть запись о разрушении"
+        );
+    }
+
+    #[test]
+    fn solar_flare_burns_animals_and_dries_the_ground() {
+        let mut sim = island(23);
+        let id = sim.spawn(Species::Deer, pos(60, 60)).expect("олень");
+        let index = sim.entity_index(id).expect("индекс");
+        let center = pos(60, 60);
+        let moisture_before = sim.world.moisture(center);
+        assert!(moisture_before > 0);
+
+        let mut guard = 0;
+        while sim.entity(id).is_some() && guard < 20 {
+            sim.cast_weather(Weather::SolarFlare, pos(60, 60), 3);
+            guard += 1;
+        }
+        assert!(!sim.entities[index].alive, "олень должен сгореть");
+        assert!(
+            sim.world.moisture(center) < 20,
+            "сушь выжигает влагу: {}",
+            sim.world.moisture(center)
+        );
+    }
+
+    #[test]
+    fn rain_grows_forest_back() {
+        let mut sim = island(24);
+        let spot = pos(64, 62);
+        sim.cast_weather(Weather::SolarFlare, spot, 3);
+        let dried = sim.world.moisture(spot);
+        sim.cast_weather(Weather::Rain, spot, 3);
+        assert!(sim.world.moisture(spot) > dried);
+        assert_eq!(sim.world.terrain(spot), crate::terrain::Terrain::Forest);
+    }
+
+    #[test]
+    fn every_weather_tool_can_be_applied() {
+        let mut sim = island(25);
+        for tool in Tool::WEATHER {
+            let changed = sim.apply_tool(ToolConfig::new(tool, 4), pos(62, 62));
+            assert!(changed > 0, "{tool:?} ничего не изменил");
+            assert!(tool.is_weather() && tool.is_paint());
+        }
     }
 
     #[test]
