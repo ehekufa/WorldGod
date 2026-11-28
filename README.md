@@ -231,7 +231,7 @@ sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev \
 
 ## Скриншоты без GPU
 
-`worldgod_preview` собирает четыре детерминированные сцены и сохраняет их в PNG —
+`worldgod_preview` собирает пять детерминированных сцен и сохраняет их в PNG —
 полезно для README, для проверки рендера в CI и просто чтобы посмотреть мир без окна:
 
 ```bash
@@ -240,6 +240,7 @@ cargo run --release -p worldgod_preview -- --out docs --px 4
 # docs/preview-2-island.png    — остров с лесом и людьми
 # docs/preview-3-nation.png    — государство после 3600 тиков
 # docs/preview-4-monsters.png  — нашествие волков и зомби
+# docs/preview-5-war.png       — две страны на войне, порты и лодки
 ```
 
 Файлы `docs/preview-*.png` генерируются заново и не хранятся в репозитории; в CI они

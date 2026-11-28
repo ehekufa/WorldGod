@@ -772,13 +772,18 @@ impl Simulation {
         id
     }
 
-    /// Ставит готовый дом страны (для кисти и тестов).
-    pub fn finish_house_for(&mut self, nation: NationId, pos: TilePos) -> BuildingId {
+    /// Ставит готовую постройку страны (для сцен, кистей и тестов).
+    pub fn finish_building(
+        &mut self,
+        kind: BuildingKind,
+        pos: TilePos,
+        nation: NationId,
+    ) -> BuildingId {
         let id = self.next_building_id;
         self.next_building_id += 1;
         self.buildings.push(Building::finished(
             id,
-            BuildingKind::House,
+            kind,
             pos,
             Some(nation),
             self.tick,
@@ -786,6 +791,11 @@ impl Simulation {
         self.blocked_dirty = true;
         self.territory_dirty = true;
         id
+    }
+
+    /// Ставит готовый дом страны.
+    pub fn finish_house_for(&mut self, nation: NationId, pos: TilePos) -> BuildingId {
+        self.finish_building(BuildingKind::House, pos, nation)
     }
 
     /// Ближайший враг для существа по его идентификатору.

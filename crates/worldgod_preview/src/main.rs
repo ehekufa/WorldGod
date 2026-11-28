@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use worldgod_core::entity::EntityId;
-use worldgod_core::{Simulation, Species, TilePos, Tool, ToolConfig, WorldSize};
+use worldgod_core::{BuildingKind, Relation, Simulation, Species, TilePos, Tool, ToolConfig, WorldSize};
 use worldgod_render::{render_scene, Frame, RenderOptions};
 
 /// Настройки запуска.
@@ -34,11 +34,12 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let scenes: [(&str, fn(u32) -> Frame); 4] = [
+    let scenes: [(&str, fn(u32) -> Frame); 5] = [
         ("preview-1-ocean.png", ocean_scene),
         ("preview-2-island.png", island_scene),
         ("preview-3-nation.png", nation_scene),
         ("preview-4-monsters.png", monsters_scene),
+        ("preview-5-war.png", war_scene),
     ];
 
     let mut failed = false;
@@ -145,6 +146,56 @@ fn monsters_scene(px: u32) -> Frame {
     render(&sim, px, 12.0)
 }
 
+/// Две страны на одном острове: война, порты, лодки и штурм домов.
+///
+/// Сцена показывает то, чего раньше не было: цветные владения двух стран,
+/// порты на берегу, лодки в воде и воинов, идущих ломать чужие дома.
+fn war_scene(px: u32) -> Frame {
+    let mut sim = Simulation::new(WorldSize::MEDIUM, 777);
+    build_island(&mut sim);
+    let center = center_of(&sim);
+
+    let left = land_near(&sim, center.offset(-22, 0));
+    let right = land_near(&sim, center.offset(22, 0));
+    let a = sim.found_nation_at(left);
+    let b = sim.found_nation_at(right);
+
+    for (home, nation, offsets) in [
+        (left, a, [(-4, -5), (3, -6), (-6, 4), (4, 5)]),
+        (right, b, [(-4, -5), (3, -6), (-6, 4), (4, 5)]),
+    ] {
+        for (dx, dy) in offsets {
+            let spot = land_near(&sim, home.offset(dx, dy));
+            if sim.building_at(spot).is_none() {
+                sim.finish_house_for(nation, spot);
+            }
+        }
+    }
+
+    // Порты на берегу и по лодке у каждой страны.
+    for nation in [a, b] {
+        if let Some(site) = sim.find_port_site(nation) {
+            if sim.building_at(site).is_none() {
+                sim.finish_building(BuildingKind::Port, site, nation);
+                sim.spawn_boat(site, nation);
+            }
+        }
+    }
+
+    sim.set_relation(a, b, Relation::War);
+    for _ in 0..3 {
+        let _ = sim.spawn_in_nation(Species::Soldier, left, a);
+        let _ = sim.spawn_in_nation(Species::Soldier, right, b);
+    }
+    for _ in 0..2 {
+        let _ = sim.spawn_in_nation(Species::Human, left, a);
+        let _ = sim.spawn_in_nation(Species::Human, right, b);
+    }
+    sim.run(700);
+    report("война", &sim);
+    render(&sim, px, 18.0)
+}
+
 // --- сценарий ---------------------------------------------------------------
 
 /// Рисует остров так, как это сделал бы игрок: несколько мазков суши,
@@ -209,6 +260,13 @@ fn spawn_near_center(sim: &mut Simulation, species: Species) -> Option<EntityId>
     sim.spawn(species, spot)
 }
 
+/// Ближайшая проходимая земля к точке (для сцен, где важна суша).
+fn land_near(sim: &Simulation, pos: TilePos) -> TilePos {
+    sim.world
+        .find_terrain_near(pos, 14, |terrain| terrain.is_walkable())
+        .unwrap_or(pos)
+}
+
 fn center_of(sim: &Simulation) -> TilePos {
     let (width, height) = sim.size();
     TilePos::new(width as i32 / 2, height as i32 / 2)
@@ -253,6 +311,23 @@ mod tests {
             );
             assert!(frame.to_png().len() > 1000);
         }
+    }
+
+    #[test]
+    fn war_scene_has_two_nations_and_boats() {
+        let mut sim = Simulation::new(WorldSize::SMALL, 777);
+        build_island(&mut sim);
+        let center = center_of(&sim);
+        let a = sim.found_nation_at(land_near(&sim, center.offset(-22, 0)));
+        let b = sim.found_nation_at(land_near(&sim, center.offset(22, 0)));
+        sim.set_relation(a, b, Relation::War);
+        assert!(sim.at_war(a, b));
+        if let Some(site) = sim.find_port_site(a) {
+            sim.finish_building(BuildingKind::Port, site, a);
+            assert!(sim.spawn_boat(site, a).is_some());
+        }
+        sim.run(60);
+        assert!(sim.stats.wars >= 1);
     }
 
     #[test]
